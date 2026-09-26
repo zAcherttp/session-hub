@@ -2,6 +2,11 @@
 
 A small macOS app for people who switch between several Claude accounts. It shows your Claude Code sessions as a Kanban board, one column per Claude Desktop account plus one for the Claude Code CLI, so you can move or share sessions between accounts and continue any of them from the CLI.
 
+
+![Session Hub board with accounts, the Stash, status chips and the floating dock](docs/screenshot.png)
+
+<sub>Screenshot from demo mode: every session, account and repo shown is made up.</sub>
+
 ## Features
 
 - **Board of every local session.** Each Desktop account and organization gets its own column, and the CLI gets one more. Rename a column by double-clicking its header, and drag headers to reorder columns.
@@ -63,6 +68,14 @@ This builds `SessionHub.app` and installs it to `~/Applications`. To print what 
 ```bash
 ~/Applications/SessionHub.app/Contents/MacOS/SessionHub --dump
 ```
+
+To see the app with made-up data (for screenshots or trying it out without touching your sessions):
+
+```bash
+open ~/Applications/SessionHub.app --args --demo
+```
+
+Demo mode reads nothing from disk, saves nothing, and ignores Apply, Undo and baseline changes. It stages one move and selects two cards so the floating dock shows.
 
 To make a universal release zip in `dist/`:
 

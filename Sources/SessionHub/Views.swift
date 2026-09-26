@@ -3,7 +3,7 @@ import SwiftUI
 
 @main
 struct SessionHubApp: App {
-    @State private var store = Store()
+    @State private var store = Store(demo: CommandLine.arguments.contains("--demo"))
 
     init() {
         // `SessionHub --schema` prints the observed data shape (used to regenerate the bundled baseline).
@@ -43,6 +43,16 @@ struct SessionHubApp: App {
                 // Initial scan only; after that FSEvents drives rescans when files actually change.
                 .task {
                     await store.refresh()
+                    if store.isDemo {
+                        // Fit every demo column so screenshots show the whole board (after window restoration).
+                        try? await Task.sleep(nanoseconds: 400_000_000)
+                        if let w = NSApp.windows.first(where: { $0.canBecomeMain }) {
+                            var f = w.frame
+                            f.origin.y += f.height - 900
+                            f.size = NSSize(width: 1690, height: 900)
+                            w.setFrame(f, display: true)
+                        }
+                    }
                     // Startup (first scan + first layout) frees large temporary buffers that malloc
                     // would otherwise keep cached; return them once the board has settled.
                     try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -164,7 +174,7 @@ struct BoardView: View {
         } onAction: { group, mode in copyCommands(group, mode) }
     }
 
-    private var applyTitle: String { "Apply \(store.pending.count) change(s)?" }
+    private var applyTitle: String { store.pending.count == 1 ? "Apply 1 change?" : "Apply \(store.pending.count) changes?" }
 
     /// Pending changes, selection and messages as glass capsules that morph in and out together.
     private var dockView: some View {
@@ -174,20 +184,21 @@ struct BoardView: View {
                     HStack(spacing: 10) {
                         Image(systemName: "arrow.left.arrow.right").foregroundStyle(.orange)
                         VStack(alignment: .leading, spacing: 0) {
-                            Text("\(store.pending.count) pending change(s)").fontWeight(.semibold)
+                            Text(store.pending.count == 1 ? "1 pending change" : "\(store.pending.count) pending changes").fontWeight(.semibold)
                             if store.pendingNeedsRelaunch {
                                 Text("Claude will quit and reopen").font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                        Button("Discard") { store.discardPending() }.glassButton()
+                        Button("Discard") { store.discardPending() }.glassButton().buttonBorderShape(.capsule)
                         Button("Apply") { confirmApply = true }
+                            .buttonBorderShape(.capsule)
                             .help(store.writesBlocked ? "Paused: Claude's data format changed (see Data shape)" : "Apply staged changes")
                             .glassButton(prominent: true)
                             .tint(.orange)
                             .keyboardShortcut(.return, modifiers: .command)
                             .disabled(store.isApplying || store.writesBlocked)
                     }
-                    .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+                    .padding(.leading, 16).padding(.trailing, Metrics.dockInset).padding(.vertical, Metrics.dockInset)
                     .glassPanel(in: Capsule())
                     .glassID("pending", in: dock)
                 }
@@ -198,9 +209,10 @@ struct BoardView: View {
                             .help("Drag any selected card to move them together · ⌘-click toggles · ⇧-click selects a range")
                         Button("Clear") { store.clearSelection() }
                             .glassButton()
+                            .buttonBorderShape(.capsule)
                             .keyboardShortcut(.escape, modifiers: [])
                     }
-                    .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+                    .padding(.leading, 16).padding(.trailing, Metrics.dockInset).padding(.vertical, Metrics.dockInset)
                     .glassPanel(in: Capsule())
                     .glassID("selection", in: dock)
                 }
@@ -211,7 +223,7 @@ struct BoardView: View {
                             .glassButton()
                             .buttonBorderShape(.circle)
                     }
-                    .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+                    .padding(.leading, 16).padding(.trailing, Metrics.dockInset).padding(.vertical, Metrics.dockInset)
                     .frame(maxWidth: 520)
                     .glassPanel(in: Capsule())
                     .glassID("message", in: dock)

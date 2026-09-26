@@ -64,6 +64,9 @@ enum Metrics {
     static let columnRadius: CGFloat = 20
     static let columnPadding: CGFloat = 8
     static let cardRadius: CGFloat = columnRadius - columnPadding
+    /// Inset of buttons inside a dock capsule; equal on top, bottom and trailing keeps the
+    /// button capsule concentric with the dock capsule.
+    static let dockInset: CGFloat = 6
     /// Keeps the last cards scrollable above the floating dock.
     static let dockClearance: CGFloat = 76
 }

@@ -49,7 +49,16 @@ final class Store {
     @ObservationIgnored private var rescanQueued = false
     @ObservationIgnored private var workspaceObservers: [NSObjectProtocol] = []
 
-    init() {
+    /// `--demo`: made-up sessions, no disk reads, no watcher, no writes.
+    @ObservationIgnored let isDemo: Bool
+
+    init(demo: Bool = false) {
+        isDemo = demo
+        if demo {
+            prefs.nicknames = DemoData.nicknames
+            baseline = nil
+            return
+        }
         loadPrefs()
         lastJournal = Self.latestJournal()
         claudeRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: Self.claudeBundleId).isEmpty
@@ -69,6 +78,7 @@ final class Store {
     // MARK: Loading
 
     func refresh() async {
+        if isDemo { loadDemo(); return }
         guard !isScanning else { rescanQueued = true; return }
         isScanning = true
         let scanner = scanner
@@ -91,6 +101,21 @@ final class Store {
         if !selection.isSubset(of: ids) { selection.formIntersection(ids) }
         isScanning = false
         if rescanQueued { rescanQueued = false; await refresh() }
+    }
+
+    private func loadDemo() {
+        columns = DemoData.columns
+        sessions = DemoData.sessions()
+        activeAccount = DemoData.acme.accountUuid
+        if let s = sessions.first(where: { $0.title == DemoData.pendingCardTitle }) {
+            pending = [s.id: PendingMove(cardId: s.id, from: s.columnId, to: "stash", copy: false)]
+        }
+        selection = Set(sessions.filter { DemoData.selectedTitles.contains($0.title) }.map(\.id))
+    }
+
+    private var demoRefusal: Bool {
+        if isDemo { message = "Demo mode: nothing is saved." }
+        return isDemo
     }
 
     /// FSEvents callback. Skips churn from transcripts the board doesn't show
@@ -262,6 +287,7 @@ final class Store {
 
     /// Deletes this account's copy of a session that another account also holds. The transcript is untouched.
     func removeCopy(_ s: Session) async {
+        if demoRefusal { return }
         guard !writesBlocked else { message = "Paused: Claude's data format changed (see Data shape)."; return }
         guard let file = s.desktopFile, !sharedWith(s).isEmpty else { return }
         let relaunch = claudeIsRunning && s.columnId.hasPrefix((activeAccount ?? "-") + "/")
@@ -294,6 +320,7 @@ final class Store {
 
     /// Accepts the current shape as the new baseline (after checking a Claude update is understood).
     func acceptShape() {
+        if demoRefusal { return }
         do {
             try ShapeStore.accept(shape)
             baseline = shape
@@ -306,6 +333,7 @@ final class Store {
     var shapeReport: String { drift.report(observed: shape, baseline: baseline) }
 
     func applyPending() async {
+        if demoRefusal { return }
         guard !writesBlocked else {
             message = "Moves are paused: Claude's data format changed. Open Data Shape in the toolbar for details."
             return
@@ -318,6 +346,7 @@ final class Store {
     }
 
     func undoLast() async {
+        if demoRefusal { return }
         guard let journal = lastJournal,
               let data = try? Data(contentsOf: journal.appendingPathComponent("undo.json")),
               let undo = try? JSONDecoder().decode([FileOp].self, from: data) else { return }
@@ -537,6 +566,7 @@ final class Store {
     }
 
     private func savePrefs() {
+        if isDemo { return }
         try? FileManager.default.createDirectory(at: Paths.hubSupport, withIntermediateDirectories: true)
         try? JSONEncoder().encode(prefs).write(to: Paths.hubPrefs)
     }
