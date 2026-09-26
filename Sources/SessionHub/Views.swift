@@ -355,12 +355,12 @@ struct SessionCard: View {
         let selected = store.selection.contains(s.id)
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .top, spacing: 6) {
-                Toggle("", isOn: Binding(get: { selected }, set: { _ in store.toggle(s) }))
-                    .toggleStyle(.checkbox).labelsHidden()
-                    .help("Select for bulk move")
                 if s.isStarred { Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption) }
                 Text(s.title).font(.system(size: 13, weight: .semibold)).lineLimit(2)
                 Spacer(minLength: 0)
+                Toggle("", isOn: Binding(get: { selected }, set: { _ in store.toggle(s) }))
+                    .toggleStyle(.checkbox).labelsHidden()
+                    .help("Select for bulk move")
             }
             HStack(spacing: 4) {
                 Image(systemName: "folder").font(.caption2)
