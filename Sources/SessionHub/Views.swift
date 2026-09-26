@@ -704,19 +704,36 @@ struct ColumnsPopover: View {
     }
 }
 
+/// Dark capsule with neutral text and a soft shade of the status color rising from the bottom
+/// edge, plus a hairline outline that catches the same color.
 struct StatusChip: View {
     let status: SessionStatus
     let reason: String
-
-    private var color: Color { status.color }
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let color = status.color
         Label(status.label, systemImage: status.symbol)
             .labelStyle(.titleAndIcon)
-            .font(.caption2.weight(.semibold)).lineLimit(1).fixedSize()
-            .padding(.horizontal, 6).padding(.vertical, 1)
-            .background(color.opacity(0.16), in: Capsule())
-            .foregroundStyle(color)
+            .font(.caption2.weight(.medium)).lineLimit(1).fixedSize()
+            .foregroundStyle(.primary.opacity(0.88))
+            .padding(.horizontal, 8).padding(.vertical, 2)
+            .background {
+                ZStack {
+                    Capsule().fill(scheme == .dark ? Color.black.opacity(0.35) : Color.white.opacity(0.75))
+                    // The shade: a blurred wash of color low in the capsule, strongest left of center.
+                    RadialGradient(colors: [color.opacity(scheme == .dark ? 0.55 : 0.35), color.opacity(0)],
+                                   center: UnitPoint(x: 0.35, y: 1.15), startRadius: 0, endRadius: 46)
+                        .blur(radius: 3)
+                }
+                .clipShape(Capsule())
+            }
+            .overlay {
+                Capsule().strokeBorder(
+                    LinearGradient(colors: [Color.primary.opacity(0.14), color.opacity(0.45)],
+                                   startPoint: .top, endPoint: .bottom),
+                    lineWidth: 0.75)
+            }
             .help(reason)
     }
 }
