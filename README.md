@@ -1,4 +1,11 @@
-# Session Hub
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/icon-dark.png">
+    <img src="docs/icon.png" width="128" height="128" alt="Session Hub app icon">
+  </picture>
+</p>
+
+<h1 align="center">Session Hub</h1>
 
 A small macOS app for people who switch between several Claude accounts. It shows your Claude Code sessions as a Kanban board, one column per Claude Desktop account plus one for the Claude Code CLI, so you can move or share sessions between accounts and continue any of them from the CLI.
 
