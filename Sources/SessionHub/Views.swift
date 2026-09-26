@@ -70,9 +70,6 @@ struct BoardView: View {
         .floatingToolbar()
         // Floating controls over the content: they never push the board around.
         .overlay(alignment: .bottom) { dockView }
-        .animation(.smooth(duration: 0.3), value: store.pending.count)
-        .animation(.smooth(duration: 0.3), value: store.selection.count)
-        .animation(.smooth(duration: 0.3), value: store.message)
         .task(id: store.message) {
             guard store.message != nil else { return }
             try? await Task.sleep(nanoseconds: 6_000_000_000)
@@ -177,6 +174,10 @@ struct BoardView: View {
             }
         }
         .padding(.bottom, Metrics.windowPadding + 12)
+        // Animate only the dock itself; board-wide animation made every card flash on selection.
+        .animation(.smooth(duration: 0.3), value: store.pending.isEmpty)
+        .animation(.smooth(duration: 0.3), value: store.selection.isEmpty)
+        .animation(.smooth(duration: 0.3), value: store.message)
     }
 
     private func copyCommands(_ sessions: [Session], _ mode: Launcher.Mode) {
@@ -404,7 +405,6 @@ struct SessionCard: View {
         .opacity(s.isArchived && !selected ? 0.6 : 1)
         .onHover { hovering = $0 }
         .animation(.smooth(duration: 0.15), value: hovering)
-        .animation(.smooth(duration: 0.15), value: selected)
         .contentShape(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
         .onTapGesture { onSelect() }
         .contextMenu { menu(s) }
