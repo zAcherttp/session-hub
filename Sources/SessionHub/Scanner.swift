@@ -358,10 +358,11 @@ final class Scanner: @unchecked Sendable {
             }
             if cwd != nil, entrypoint != nil, firstPrompt != nil { break }
         }
-        guard let cwd, let firstPrompt else { return nil }
+        guard var cwd, let firstPrompt else { return nil }
 
-        // Tail: search backwards for the latest title/model/branch, widening only if needed.
-        var title: String?, model: String?
+        // Tail: search backwards for the latest title/model/folder/branch, widening only if needed.
+        // A /branch fork starts with the parent's copied lines, so its own folder and branch are the latest ones.
+        var title: String?, model: String?, lastCwd: String?, lastBranch: String?
         var window = 64 * 1024
         while true {
             let start = max(0, size - window)
@@ -371,10 +372,13 @@ final class Scanner: @unchecked Sendable {
                 title = (t["customTitle"] as? String) ?? (t["aiTitle"] as? String)
             }
             model = model ?? lastMatch(#""model":""#, prefix: "claude-", in: tail)
-            if branch == nil, let b = lastMatch(#""gitBranch":""#, prefix: nil, in: tail), b != "HEAD" { branch = b }
+            lastCwd = lastCwd ?? lastMatch(#""cwd":""#, prefix: nil, in: tail)
+            lastBranch = lastBranch ?? lastMatch(#""gitBranch":""#, prefix: nil, in: tail)
             if (title != nil && model != nil) || start == 0 || window >= tailLimit { break }
             window = min(window * 4, tailLimit)
         }
+        if let c = lastCwd, c != cwd { cwd = c; branch = nil }
+        if let b = lastBranch { branch = b.isEmpty || b == "HEAD" ? nil : b }
 
         let origin = cwd.range(of: "/.claude/worktrees/").map { String(cwd[..<$0.lowerBound]) } ?? cwd
         let wt = cwd.range(of: "/.claude/worktrees/").map { String(cwd[$0.upperBound...]).components(separatedBy: "/").first ?? "" }

@@ -430,7 +430,9 @@ final class Store {
             "titleSource": "user",
             "permissionMode": "default",
         ]
-        if let b = s.branch { meta["branch"] = b }
+        // Desktop reads "branch" on a worktree folder as a worktree it must re-lease, and refuses while the
+        // branch is checked out there. Only pass it when the folder is gone, so Desktop can rebuild it.
+        if let b = s.branch, !s.cwdExists { meta["branch"] = b }
         if move.to == "stash" { meta["isArchived"] = true }
         guard let data = try? JSONSerialization.data(withJSONObject: meta, options: [.prettyPrinted, .sortedKeys]) else { return nil }
         return [.create(path: target.appendingPathComponent(id + ".json").path, data: data)]
