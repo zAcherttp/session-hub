@@ -386,8 +386,8 @@ struct ColumnView: View {
                         .onTapGesture(count: 2) { draft = store.name(for: column); editing = true }
                 }
                 if column.accountUuid != nil && column.accountUuid == store.activeAccount {
-                    Text("Signed in").font(.caption2.weight(.semibold)).padding(.horizontal, 7).padding(.vertical, 2)
-                        .background(.green.opacity(0.18), in: Capsule()).foregroundStyle(.green)
+                    GlassBadge("Signed in", systemImage: "checkmark.circle", color: .green)
+                        .fixedSize()
                         .help("Claude Desktop's last signed-in account")
                 }
                 Spacer()
@@ -469,15 +469,21 @@ struct SessionCard: View {
             if s.isWorktree || s.isArchived || s.prCount > 0 || move != nil || !shared.isEmpty {
                 HStack(spacing: 6) {
                     if s.isWorktree {
-                        tag(s.cwdExists ? "worktree" : "worktree gone", color: s.cwdExists ? .purple : .red)
+                        GlassBadge(s.cwdExists ? "worktree" : "worktree gone",
+                                   systemImage: s.cwdExists ? "square.split.bottomrightquarter" : "exclamationmark.triangle",
+                                   color: s.cwdExists ? .purple : .red)
                     }
-                    if s.isArchived { tag("archived", color: .gray) }
-                    if s.prCount > 0 { tag("\(s.prCount) PR", color: .blue) }
+                    if s.isArchived { GlassBadge("archived", systemImage: "archivebox", color: .gray) }
+                    if s.prCount > 0 {
+                        GlassBadge("\(s.prCount) PR", systemImage: "arrow.triangle.pull", color: .blue)
+                            .fixedSize()
+                    }
                     if let m = move {
-                        tag((m.copy ? "+ " : "→ ") + store.name(for: store.column(m.to)), color: .orange)
+                        GlassBadge(store.name(for: store.column(m.to)), systemImage: m.copy ? "plus" : "arrow.right", color: .orange)
                     }
                     if !shared.isEmpty {
-                        tag("shared ×\(shared.count + 1)", color: .teal)
+                        GlassBadge("shared ×\(shared.count + 1)", systemImage: "person.2", color: .teal)
+                            .fixedSize()
                             .help("Also in: " + shared.map { store.name(for: store.column($0)) }.joined(separator: ", "))
                     }
             }
@@ -539,11 +545,6 @@ struct SessionCard: View {
         store.clearSelection()
     }
 
-    private func tag(_ text: String, color: Color) -> some View {
-        Text(text).font(.caption2.weight(.medium)).lineLimit(1).truncationMode(.middle)
-            .padding(.horizontal, 5).padding(.vertical, 1)
-            .background(color.opacity(0.15), in: Capsule()).foregroundStyle(color)
-    }
 }
 
 struct DragPreview: View {
@@ -709,21 +710,39 @@ struct StatusChip: View {
     let reason: String
 
     var body: some View {
-        Label(status.label, systemImage: status.symbol)
-            .labelStyle(.titleAndIcon)
-            .font(.caption2.weight(.medium)).lineLimit(1).fixedSize()
-            .foregroundStyle(.primary.opacity(0.72))
-            .padding(.horizontal, 8).padding(.vertical, 2)
-            .background {
-                // A low, soft shade: color only in the bottom half, well under half strength.
-                LinearGradient(stops: [.init(color: status.color.opacity(0.32), location: 0),
-                                       .init(color: status.color.opacity(0.08), location: 0.55),
-                                       .init(color: status.color.opacity(0), location: 1)],
-                               startPoint: .bottom, endPoint: .top)
-                    .clipShape(Capsule())
-            }
-            .glassPanel(in: Capsule())
-            .help(reason)
+        GlassBadge(status.label, systemImage: status.symbol, color: status.color).fixedSize().help(reason)
+    }
+}
+
+/// The app's one badge style: native Liquid Glass capsule, dimmed neutral text, and a soft shade
+/// of `color` rising from the bottom edge. No border.
+struct GlassBadge: View {
+    let text: String
+    let systemImage: String?
+    let color: Color
+
+    init(_ text: String, systemImage: String? = nil, color: Color) {
+        self.text = text
+        self.systemImage = systemImage
+        self.color = color
+    }
+
+    var body: some View {
+        Group {
+            if let systemImage { Label(text, systemImage: systemImage).labelStyle(.titleAndIcon) } else { Text(text) }
+        }
+        .font(.caption2.weight(.medium)).lineLimit(1).truncationMode(.middle)
+        .foregroundStyle(.primary.opacity(0.72))
+        .padding(.horizontal, 8).padding(.vertical, 2)
+        .background {
+            // A low, soft shade: color only in the bottom half, well under half strength.
+            LinearGradient(stops: [.init(color: color.opacity(0.32), location: 0),
+                                   .init(color: color.opacity(0.08), location: 0.55),
+                                   .init(color: color.opacity(0), location: 1)],
+                           startPoint: .bottom, endPoint: .top)
+                .clipShape(Capsule())
+        }
+        .glassPanel(in: Capsule())
     }
 }
 
