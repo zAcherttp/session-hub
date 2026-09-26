@@ -30,6 +30,12 @@ extension View {
         if #available(macOS 26, *) { glassEffectID(id, in: namespace) } else { self }
     }
 
+    /// Drops the opaque toolbar strip so the toolbar's glass controls float over the content beneath.
+    @ViewBuilder
+    func floatingToolbar() -> some View {
+        if #available(macOS 15, *) { toolbarBackgroundVisibility(.hidden, for: .windowToolbar) } else { self }
+    }
+
     /// Soft fade where scrolling content meets the toolbar.
     @ViewBuilder
     func softScrollEdge() -> some View {

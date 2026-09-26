@@ -3,10 +3,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 swift build -c release
+# SwiftPM records the deployment target (14.0) as the linked SDK version; macOS then renders
+# system controls in their legacy style. Stamp the real SDK so the toolbar gets Liquid Glass.
+stamp_sdk() {
+  vtool -set-build-version macos 14.0 "$(xcrun --show-sdk-version)" -replace -output "$1" "$1" 2>/dev/null
+}
 APP="build/SessionHub.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/SessionHub "$APP/Contents/MacOS/SessionHub"
+stamp_sdk "$APP/Contents/MacOS/SessionHub"
 cp Info.plist "$APP/Contents/Info.plist"
 codesign --force --sign - "$APP"
 mkdir -p ~/Applications

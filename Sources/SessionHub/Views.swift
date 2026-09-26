@@ -55,18 +55,24 @@ struct BoardView: View {
     @Namespace private var dock
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: 14) {
-                ForEach(store.orderedColumns.filter { !store.prefs.hiddenColumns.contains($0.id) }) { column in
-                    ColumnView(column: column, search: search, archiveFilter: archiveFilter) { sessions in
-                        forkRequest = ForkRequest(sessions: sessions)
-                    } onAction: { group, mode in copyCommands(group, mode) }
+        // Columns run up underneath the toolbar; their headers start below it (`topInset`).
+        GeometryReader { geo in
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    ForEach(store.orderedColumns.filter { !store.prefs.hiddenColumns.contains($0.id) }) { column in
+                        ColumnView(column: column, search: search, archiveFilter: archiveFilter, topInset: geo.safeAreaInsets.top) { sessions in
+                            forkRequest = ForkRequest(sessions: sessions)
+                        } onAction: { group, mode in copyCommands(group, mode) }
+                    }
                 }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .frame(minHeight: geo.size.height + geo.safeAreaInsets.top, alignment: .top)
             }
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .scrollIndicators(.never)
+            .ignoresSafeArea(.container, edges: .top)
         }
-        .scrollIndicators(.never)
+        .floatingToolbar()
         // Floating controls over the content: they never push the board around.
         .overlay(alignment: .bottom) { dockView }
         .overlay(alignment: .bottomLeading) {
@@ -222,6 +228,7 @@ struct ColumnView: View {
     let column: Column
     let search: String
     let archiveFilter: ArchiveFilter
+    var topInset: CGFloat = 0
     let onFork: ([Session]) -> Void
     let onAction: ([Session], Launcher.Mode) -> Void
     @State private var targeted = false
@@ -338,7 +345,7 @@ struct ColumnView: View {
             let hint = store.hint(for: column)
             if !hint.isEmpty { Text(hint).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
         }
-        .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
+        .padding(.horizontal, 14).padding(.top, 14 + max(0, topInset - 8)).padding(.bottom, 10)
     }
 }
 
