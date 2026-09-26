@@ -1,12 +1,12 @@
 # Session Hub
 
-A small macOS app for people who switch between several Claude accounts. It shows your Claude Code sessions as a Kanban board, one column per Claude Desktop account plus one for the Claude Code CLI, so you can move or share sessions between accounts and continue any of them in iTerm2.
+A small macOS app for people who switch between several Claude accounts. It shows your Claude Code sessions as a Kanban board, one column per Claude Desktop account plus one for the Claude Code CLI, so you can move or share sessions between accounts and continue any of them from the CLI.
 
 ## Features
 
 - **Board of every local session.** Each Desktop account and organization gets its own column, and the CLI gets one more. Rename a column by double-clicking its header, and drag headers to reorder columns.
 - **Move or share between accounts.** Drag a card to another account to move it; hold ⌥ while dropping to copy it so both accounts see it. Changes stay pending until you click **Apply**. If a change involves the account Claude Desktop is signed into, Apply quits Claude, updates the files, and reopens it. Every change is backed up, and **Undo** reverts the last batch.
-- **Continue in iTerm2.** Drop a Desktop card on the CLI column, or right-click any card, and choose:
+- **Continue from the CLI.** Drop a Desktop card on the CLI column, or right-click any card, to copy a ready-to-paste command. It works in any terminal:
   - **Fork here:** `claude --resume <id> --fork-session` in the session's folder.
   - **Fork into a new worktree:** creates `.claude/worktrees/fork-…` from the session's current commit, so both sessions can edit in parallel.
   - **Resume:** continues the same session ID.

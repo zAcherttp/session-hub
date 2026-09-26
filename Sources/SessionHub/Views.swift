@@ -51,7 +51,6 @@ struct BoardView: View {
     @AppStorage("archiveFilter") private var archiveFilter: ArchiveFilter = .active
     @State private var forkRequest: ForkRequest?
     @State private var confirmApply = false
-    @State private var error: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,7 +60,7 @@ struct BoardView: View {
                     ForEach(store.orderedColumns.filter { !store.prefs.hiddenColumns.contains($0.id) }) { column in
                         ColumnView(column: column, search: search, archiveFilter: archiveFilter) { sessions in
                             forkRequest = ForkRequest(sessions: sessions)
-                        } onAction: { group, mode in group.forEach { launch($0, mode) } }
+                        } onAction: { group, mode in copyCommands(group, mode) }
                     }
                 }
                 .padding(12)
@@ -108,7 +107,7 @@ struct BoardView: View {
             }
         }
         .sheet(item: $forkRequest) { req in
-            ForkSheet(sessions: req.sessions) { mode in req.sessions.forEach { launch($0, mode) }; forkRequest = nil }
+            CommandSheet(sessions: req.sessions) { mode in announceCopy(req.sessions, mode); forkRequest = nil }
         }
         .confirmationDialog(applyTitle, isPresented: $confirmApply, titleVisibility: .visible) {
             Button(store.pendingNeedsRelaunch ? "Quit Claude, Apply & Relaunch" : "Apply") { Task { await store.applyPending() } }
@@ -118,9 +117,6 @@ struct BoardView: View {
                  ? "These changes touch the account Claude Desktop is signed into. Claude will quit (stopping any running sessions), the files will be updated, and Claude will reopen. A backup is kept and you can undo."
                  : "Session files will be moved or copied between account folders. A backup is kept and you can undo.")
         }
-        .alert("Couldn't open iTerm2", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-            Button("OK") { error = nil }
-        } message: { Text(error ?? "") }
     }
 
     private var applyTitle: String { "Apply \(store.pending.count) change(s)?" }
@@ -156,8 +152,14 @@ struct BoardView: View {
         .background(Color.accentColor.opacity(0.10))
     }
 
-    private func launch(_ s: Session, _ mode: Launcher.Mode) {
-        do { try Launcher.runInITerm(Launcher.command(for: s, mode: mode)) } catch { self.error = error.localizedDescription }
+    private func copyCommands(_ sessions: [Session], _ mode: Launcher.Mode) {
+        Launcher.copy(Launcher.commands(for: sessions, mode: mode))
+        announceCopy(sessions, mode)
+    }
+
+    private func announceCopy(_ sessions: [Session], _ mode: Launcher.Mode) {
+        let what = sessions.count == 1 ? "“\(sessions[0].title)”" : "\(sessions.count) sessions"
+        store.message = "Copied \(mode.label.lowercased()) command for \(what). Paste it into a terminal."
     }
 }
 
@@ -227,7 +229,7 @@ struct ColumnView: View {
                         Button("Show \(min(150, list.count - limit)) more…") { limit += 150 }.buttonStyle(.link).padding(6)
                     }
                     if list.isEmpty {
-                        Text(column.kind == .cli ? "Drop a Desktop session here to fork it in iTerm2" : "Drop sessions here")
+                        Text(column.kind == .cli ? "Drop a Desktop session here to get a CLI command" : "Drop sessions here")
                             .font(.callout).foregroundStyle(.tertiary).frame(maxWidth: .infinity).padding(.vertical, 40)
                     }
                 }
@@ -366,9 +368,9 @@ struct SessionCard: View {
     @ViewBuilder private func menu(_ s: Session) -> some View {
         let group = store.group(for: s)
         let suffix = group.count > 1 ? " (\(group.count) sessions)" : ""
-        Button("Fork in iTerm2" + suffix) { onAction(group, .fork) }
-        Button("Fork into new worktree in iTerm2" + suffix) { onAction(group, .forkNewWorktree) }
-        Button("Resume in iTerm2 (same session ID)" + suffix) { onAction(group, .resume) }
+        Button("Copy fork command" + suffix) { onAction(group, .fork) }
+        Button("Copy fork-into-new-worktree command" + suffix) { onAction(group, .forkNewWorktree) }
+        Button("Copy resume command (same session ID)" + suffix) { onAction(group, .resume) }
         Divider()
         let targets = store.orderedColumns.filter { $0.kind != .cli && $0.id != s.columnId }
         if s.isDesktop {
@@ -384,7 +386,6 @@ struct SessionCard: View {
             Button("Remove from this account (keep other copies)") { Task { await store.removeCopy(s) } }
         }
         Divider()
-        Button("Copy fork command") { Launcher.copy(Launcher.command(for: s, mode: .fork)) }
         Button("Copy session ID") { Launcher.copy(s.cliSessionId) }
         Button("Reveal transcript in Finder") { NSWorkspace.shared.activateFileViewerSelecting([s.transcriptURL]) }
         if s.cwdExists { Button("Open working folder") { NSWorkspace.shared.open(URL(fileURLWithPath: s.cwd)) } }
@@ -427,31 +428,35 @@ struct DragPreview: View {
     }
 }
 
-struct ForkSheet: View {
+struct CommandSheet: View {
     let sessions: [Session]
-    let onPick: (Launcher.Mode) -> Void
+    /// Called after the chosen command is on the clipboard.
+    let onCopied: (Launcher.Mode) -> Void
     @Environment(\.dismiss) private var dismiss
+    /// Generated once so the preview is exactly what gets copied (worktree names are random).
+    @State private var commands: [Launcher.Mode: String] = [:]
 
     private var session: Session { sessions[0] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text(sessions.count > 1 ? "Continue \(sessions.count) sessions in iTerm2" : "Continue in iTerm2").font(.title3.bold())
+            Text(sessions.count > 1 ? "Continue \(sessions.count) sessions in a terminal" : "Continue in a terminal").font(.title3.bold())
             if sessions.count > 1 {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(sessions.prefix(6)) { Text("• " + $0.title).lineLimit(1) }
                     if sessions.count > 6 { Text("and \(sessions.count - 6) more").foregroundStyle(.secondary) }
                 }
                 .font(.callout)
-                Text("Each opens in its own iTerm2 tab.").font(.caption).foregroundStyle(.secondary)
+                Text("The copied text has one command per session; pasted together they run one after another.")
+                    .font(.caption).foregroundStyle(.secondary)
             } else {
                 Text(session.title).font(.headline)
                 Text(session.cwd).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
             }
             VStack(alignment: .leading, spacing: 8) {
-                option("Fork here", "New session ID, same folder\(sessions.allSatisfy(\.cwdExists) ? "" : " (a gone worktree falls back to the repo root)"). Desktop's session is untouched.", .fork)
-                option("Fork into a new worktree", "Creates .claude/worktrees/fork-… from the current commit so both sessions can edit in parallel. Uncommitted changes stay behind.", .forkNewWorktree)
-                option("Resume (same ID)", "Continues the exact session. Don't use while Desktop is running it.", .resume)
+                option("New session ID, same folder\(sessions.allSatisfy(\.cwdExists) ? "" : " (a gone worktree falls back to the repo root)"). Desktop's session is untouched.", .fork)
+                option("Creates .claude/worktrees/fork-… from the current commit so both sessions can edit in parallel. Uncommitted changes stay behind.", .forkNewWorktree)
+                option("Continues the exact session. Don't use while Desktop is running it.", .resume)
             }
             HStack {
                 Spacer()
@@ -459,20 +464,32 @@ struct ForkSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 460)
+        .frame(width: 560)
+        .onAppear {
+            for mode in [Launcher.Mode.fork, .forkNewWorktree, .resume] {
+                commands[mode] = Launcher.commands(for: sessions, mode: mode)
+            }
+        }
     }
 
-    private func option(_ title: String, _ detail: String, _ mode: Launcher.Mode) -> some View {
-        Button { onPick(mode) } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).fontWeight(.semibold)
-                Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    private func option(_ detail: String, _ mode: Launcher.Mode) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(mode.label).fontWeight(.semibold)
+                Spacer()
+                Button("Copy command") {
+                    Launcher.copy(commands[mode] ?? Launcher.commands(for: sessions, mode: mode))
+                    onCopied(mode)
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(10)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
-            .contentShape(Rectangle())
+            Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(commands[mode] ?? "")
+                .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
+                .lineLimit(8).textSelection(.enabled)
+                .padding(6).frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.15)))
         }
-        .buttonStyle(.plain)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
     }
 }

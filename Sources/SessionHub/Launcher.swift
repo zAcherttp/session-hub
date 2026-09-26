@@ -1,9 +1,18 @@
 import AppKit
 import Foundation
 
-/// Builds `claude` shell commands for a session and runs them in iTerm2.
+/// Builds `claude` shell commands for a session, to paste into any terminal.
 enum Launcher {
-    enum Mode { case resume, fork, forkNewWorktree }
+    enum Mode: Hashable {
+        case resume, fork, forkNewWorktree
+        var label: String {
+            switch self {
+            case .fork: return "Fork here"
+            case .forkNewWorktree: return "Fork into a new worktree"
+            case .resume: return "Resume"
+            }
+        }
+    }
 
     static func shellQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -50,44 +59,19 @@ enum Launcher {
             steps.append("cd \(shellQuote(wtPath))")
         }
         steps.append("claude --resume \(s.cliSessionId)\(flags)")
-        return steps.joined(separator: " && ")
+        // One step per line keeps long commands readable once pasted.
+        return steps.joined(separator: " && \\\n  ")
+    }
+
+    /// Commands for several sessions, one block each. Pasted together, they run one after another.
+    static func commands(for sessions: [Session], mode: Mode) -> String {
+        sessions.map { command(for: $0, mode: mode) }.joined(separator: "\n\n")
     }
 
     static func slug(_ title: String) -> String {
         let lowered = title.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }
         let collapsed = String(lowered).split(separator: "-").prefix(5).joined(separator: "-")
         return collapsed.isEmpty ? "session" : String(collapsed.prefix(40))
-    }
-
-    private static let script = """
-    on run argv
-        set cmd to item 1 of argv
-        tell application id "com.googlecode.iterm2"
-            activate
-            if (count of windows) = 0 then
-                set w to (create window with default profile)
-            else
-                set w to current window
-                tell w to create tab with default profile
-            end if
-            tell current session of w to write text cmd
-        end tell
-    end run
-    """
-
-    static func runInITerm(_ command: String) throws {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        p.arguments = ["-e", script, command]
-        let err = Pipe()
-        p.standardError = err
-        try p.run()
-        p.waitUntilExit()
-        if p.terminationStatus != 0 {
-            let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-            throw NSError(domain: "SessionHub", code: Int(p.terminationStatus),
-                          userInfo: [NSLocalizedDescriptionKey: "iTerm2 automation failed: \(msg)"])
-        }
     }
 
     static func copy(_ text: String) {
