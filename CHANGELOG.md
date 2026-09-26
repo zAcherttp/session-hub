@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.0.2
+
+### Added
+- **App icon** made with Icon Composer: a Liquid Glass icon with frosted board columns and an orange card mid-move, with Default, Dark and Clear looks. `Icon/AppIcon.icon` opens in Icon Composer; the build compiles it automatically.
+- **Sidebar** with status filters and counts (All, Running, Needs you, Interrupted, In review, Idle, Done). Click one to show only those sessions in every column.
+- **Sessions menu:** Move Selection to Stash (⇧⌘S), Clear Selection and Discard Pending Changes.
+- **Demo mode:** `open SessionHub.app --args --demo` shows made-up sessions for screenshots and never reads or writes your files. The README now has a screenshot.
+
+### Changed
+- **Badges** now use native Liquid Glass capsules with dimmed text and a soft status color rising from the bottom. Every badge (status, worktree, PR, shared, archived, pending move, Signed in) shares this style and has an icon.
+- **Badges fit on one line.** Ones that don't fit collapse into **+N**; hover it for a quick list, click it to see them all.
+- **Messages** show an icon, a short title and a plain-language explanation. Errors stay until you dismiss them.
+- **Floating dock buttons** are capsules that follow the dock's curve.
+- **The Stash** is always the first board column.
+- Data-format notices are limited to fields the app actually reads, so they're less noisy.
+
+### Fixed
+- **Stashing CLI sessions failed** with "file doesn't exist" when the Stash folder hadn't been created yet.
+- **A failed Apply discarded your staged changes.** They're now kept so you can retry.
+- "1 pending change(s)" now uses proper singular and plural wording.
+
 ## 1.0.1
 
 ### Added
