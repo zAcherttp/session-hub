@@ -49,7 +49,7 @@ struct BoardView: View {
     @EnvironmentObject var store: Store
     @State private var search = ""
     @AppStorage("archiveFilter") private var archiveFilter: ArchiveFilter = .active
-    @State private var forkTarget: Session?
+    @State private var forkRequest: ForkRequest?
     @State private var confirmApply = false
     @State private var error: String?
 
@@ -59,13 +59,15 @@ struct BoardView: View {
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(store.orderedColumns.filter { !store.prefs.hiddenColumns.contains($0.id) }) { column in
-                        ColumnView(column: column, search: search, archiveFilter: archiveFilter) { outcome in
-                            if case let .forkRequested(s) = outcome { forkTarget = s }
-                        } onAction: { s, mode in launch(s, mode) }
+                        ColumnView(column: column, search: search, archiveFilter: archiveFilter) { sessions in
+                            forkRequest = ForkRequest(sessions: sessions)
+                        } onAction: { group, mode in group.forEach { launch($0, mode) } }
                     }
                 }
                 .padding(12)
             }
+            // Bottom placement so selecting a card never shifts the board under the cursor.
+            if !store.selection.isEmpty { selectionBar }
             if store.hiddenNonLocal > 0 {
                 Text("\(store.hiddenNonLocal) session(s) from other machines/users hidden")
                     .font(.caption).foregroundStyle(.secondary)
@@ -105,7 +107,9 @@ struct BoardView: View {
                 }
             }
         }
-        .sheet(item: $forkTarget) { s in ForkSheet(session: s) { mode in launch(s, mode); forkTarget = nil } }
+        .sheet(item: $forkRequest) { req in
+            ForkSheet(sessions: req.sessions) { mode in req.sessions.forEach { launch($0, mode) }; forkRequest = nil }
+        }
         .confirmationDialog(applyTitle, isPresented: $confirmApply, titleVisibility: .visible) {
             Button(store.pendingNeedsRelaunch ? "Quit Claude, Apply & Relaunch" : "Apply") { Task { await store.applyPending() } }
             Button("Cancel", role: .cancel) {}
@@ -139,9 +143,27 @@ struct BoardView: View {
         .background(Color.orange.opacity(0.12))
     }
 
+    private var selectionBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
+            Text("\(store.selection.count) selected").fontWeight(.medium)
+            Text("Drag any selected card to move them together · ⌘-click toggles · ⇧-click selects a range")
+                .font(.callout).foregroundStyle(.secondary).lineLimit(1)
+            Spacer()
+            Button("Clear") { store.clearSelection() }.keyboardShortcut(.escape, modifiers: [])
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .background(Color.accentColor.opacity(0.10))
+    }
+
     private func launch(_ s: Session, _ mode: Launcher.Mode) {
         do { try Launcher.runInITerm(Launcher.command(for: s, mode: mode)) } catch { self.error = error.localizedDescription }
     }
+}
+
+struct ForkRequest: Identifiable {
+    let id = UUID()
+    let sessions: [Session]
 }
 
 enum ArchiveFilter: String, CaseIterable, Identifiable {
@@ -169,8 +191,8 @@ struct ColumnView: View {
     let column: Column
     let search: String
     let archiveFilter: ArchiveFilter
-    let onDrop: (Store.DropOutcome) -> Void
-    let onAction: (Session, Launcher.Mode) -> Void
+    let onFork: ([Session]) -> Void
+    let onAction: ([Session], Launcher.Mode) -> Void
     @State private var targeted = false
     @State private var editing = false
     @State private var draft = ""
@@ -198,8 +220,8 @@ struct ColumnView: View {
             ScrollView {
                 LazyVStack(spacing: 8) {
                     ForEach(list.prefix(limit)) { s in
-                        SessionCard(session: s, onAction: onAction)
-                            .draggable(s.id) { SessionCard(session: s, onAction: { _, _ in }).frame(width: 300).opacity(0.9) }
+                        SessionCard(session: s, onSelect: { store.click(s, in: list) }, onAction: onAction)
+                            .draggable(store.dragPayload(for: s)) { DragPreview(session: s, count: store.group(for: s).count) }
                     }
                     if list.count > limit {
                         Button("Show \(min(150, list.count - limit)) more…") { limit += 150 }.buttonStyle(.link).padding(6)
@@ -223,7 +245,12 @@ struct ColumnView: View {
             }
             // Hold ⌥ while dropping to share (copy) instead of move.
             let copy = NSEvent.modifierFlags.contains(.option)
-            for id in ids { onDrop(store.drop(cardId: id, on: column, copy: copy)) }
+            var forks: [Session] = []
+            for id in ids.flatMap({ $0.split(separator: "\n").map(String.init) }) {
+                if case let .forkRequested(s) = store.drop(cardId: id, on: column, copy: copy) { forks.append(s) }
+            }
+            if !forks.isEmpty { onFork(forks) }
+            store.clearSelection()
             return true
         } isTargeted: { targeted = $0 }
     }
@@ -247,6 +274,8 @@ struct ColumnView: View {
                 Spacer()
                 Text("\(count)").font(.callout.monospacedDigit()).foregroundStyle(.secondary)
                 Menu {
+                    Button("Select all in column") { store.select(items) }
+                    Divider()
                     Button("Rename…") { draft = store.name(for: column); editing = true }
                     Button("Move column left") { store.moveColumn(column, by: -1) }
                     Button("Move column right") { store.moveColumn(column, by: 1) }
@@ -275,13 +304,18 @@ struct ColumnView: View {
 struct SessionCard: View {
     @EnvironmentObject var store: Store
     let session: Session
-    let onAction: (Session, Launcher.Mode) -> Void
+    var onSelect: () -> Void = {}
+    let onAction: ([Session], Launcher.Mode) -> Void
 
     var body: some View {
         let s = session
         let move = store.pending[s.id]
+        let selected = store.selection.contains(s.id)
         VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .top, spacing: 4) {
+            HStack(alignment: .top, spacing: 6) {
+                Toggle("", isOn: Binding(get: { selected }, set: { _ in store.toggle(s) }))
+                    .toggleStyle(.checkbox).labelsHidden()
+                    .help("Select for bulk move")
                 if s.isStarred { Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption) }
                 Text(s.title).font(.system(size: 13, weight: .semibold)).lineLimit(2)
                 Spacer(minLength: 0)
@@ -318,26 +352,32 @@ struct SessionCard: View {
         }
         .padding(9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(move != nil ? Color.orange : Color.secondary.opacity(0.15), lineWidth: move != nil ? 1.5 : 1))
-        .opacity(s.isArchived ? 0.6 : 1)
+        .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.accentColor.opacity(0.12) : Color(nsColor: .windowBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(
+            selected ? Color.accentColor : move != nil ? Color.orange : Color.secondary.opacity(0.15),
+            lineWidth: selected ? 2 : move != nil ? 1.5 : 1))
+        .opacity(s.isArchived && !selected ? 0.6 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect() }
         .contextMenu { menu(s) }
         .help(s.cwd)
     }
 
     @ViewBuilder private func menu(_ s: Session) -> some View {
-        Button("Fork in iTerm2") { onAction(s, .fork) }
-        Button("Fork into new worktree in iTerm2") { onAction(s, .forkNewWorktree) }
-        Button("Resume in iTerm2 (same session ID)") { onAction(s, .resume) }
+        let group = store.group(for: s)
+        let suffix = group.count > 1 ? " (\(group.count) sessions)" : ""
+        Button("Fork in iTerm2" + suffix) { onAction(group, .fork) }
+        Button("Fork into new worktree in iTerm2" + suffix) { onAction(group, .forkNewWorktree) }
+        Button("Resume in iTerm2 (same session ID)" + suffix) { onAction(group, .resume) }
         Divider()
         let targets = store.orderedColumns.filter { $0.kind != .cli && $0.id != s.columnId }
         if s.isDesktop {
-            Menu("Move to") {
-                ForEach(targets) { c in Button(store.name(for: c)) { _ = store.drop(cardId: s.id, on: c, copy: false) } }
+            Menu("Move to" + suffix) {
+                ForEach(targets) { c in Button(store.name(for: c)) { stage(group, on: c, copy: false) } }
             }
         }
-        Menu(s.isDesktop ? "Share with (copy)" : "Add to Desktop account") {
-            ForEach(targets) { c in Button(store.name(for: c)) { _ = store.drop(cardId: s.id, on: c, copy: true) } }
+        Menu((s.isDesktop ? "Share with (copy)" : "Add to Desktop account") + suffix) {
+            ForEach(targets) { c in Button(store.name(for: c)) { stage(group, on: c, copy: true) } }
         }
         if store.pending[s.id] != nil { Button("Cancel pending change") { store.pending[s.id] = nil } }
         if !store.sharedWith(s).isEmpty {
@@ -350,6 +390,11 @@ struct SessionCard: View {
         if s.cwdExists { Button("Open working folder") { NSWorkspace.shared.open(URL(fileURLWithPath: s.cwd)) } }
     }
 
+    private func stage(_ group: [Session], on c: Column, copy: Bool) {
+        for g in group { _ = store.drop(cardId: g.id, on: c, copy: copy) }
+        store.clearSelection()
+    }
+
     private func tag(_ text: String, color: Color) -> some View {
         Text(text).font(.caption2.weight(.medium)).lineLimit(1)
             .padding(.horizontal, 5).padding(.vertical, 1)
@@ -357,18 +402,54 @@ struct SessionCard: View {
     }
 }
 
-struct ForkSheet: View {
+struct DragPreview: View {
     let session: Session
+    let count: Int
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            if count > 1 {
+                RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor))
+                    .frame(width: 280, height: 44).offset(x: 6, y: 6)
+                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.3)).offset(x: 6, y: 6))
+            }
+            Text(session.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                .padding(12).frame(width: 280, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2))
+            if count > 1 {
+                Text("\(count)").font(.caption.bold()).foregroundStyle(.white)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(Capsule().fill(Color.accentColor)).offset(x: 8, y: -8)
+            }
+        }
+        .padding(10)
+    }
+}
+
+struct ForkSheet: View {
+    let sessions: [Session]
     let onPick: (Launcher.Mode) -> Void
     @Environment(\.dismiss) private var dismiss
 
+    private var session: Session { sessions[0] }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Continue in iTerm2").font(.title3.bold())
-            Text(session.title).font(.headline)
-            Text(session.cwd).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+            Text(sessions.count > 1 ? "Continue \(sessions.count) sessions in iTerm2" : "Continue in iTerm2").font(.title3.bold())
+            if sessions.count > 1 {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(sessions.prefix(6)) { Text("• " + $0.title).lineLimit(1) }
+                    if sessions.count > 6 { Text("and \(sessions.count - 6) more").foregroundStyle(.secondary) }
+                }
+                .font(.callout)
+                Text("Each opens in its own iTerm2 tab.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text(session.title).font(.headline)
+                Text(session.cwd).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+            }
             VStack(alignment: .leading, spacing: 8) {
-                option("Fork here", "New session ID, same folder\(session.cwdExists ? "" : " (worktree is gone — uses the repo root)"). Desktop's session is untouched.", .fork)
+                option("Fork here", "New session ID, same folder\(sessions.allSatisfy(\.cwdExists) ? "" : " (a gone worktree falls back to the repo root)"). Desktop's session is untouched.", .fork)
                 option("Fork into a new worktree", "Creates .claude/worktrees/fork-… from the current commit so both sessions can edit in parallel. Uncommitted changes stay behind.", .forkNewWorktree)
                 option("Resume (same ID)", "Continues the exact session. Don't use while Desktop is running it.", .resume)
             }

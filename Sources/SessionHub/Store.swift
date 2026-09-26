@@ -22,6 +22,9 @@ final class Store: ObservableObject {
     @Published var message: String?
     @Published var lastJournal: URL?
     @Published var hiddenNonLocal = 0
+    /// Selected card ids (`Session.id`).
+    @Published var selection: Set<String> = []
+    private var selectionAnchor: String?
 
     init() {
         loadPrefs()
@@ -40,6 +43,7 @@ final class Store: ObservableObject {
         hiddenNonLocal = result.hiddenNonLocal
         let ids = Set(sessions.map(\.id))
         pending = pending.filter { ids.contains($0.key) }
+        selection.formIntersection(ids)
         isScanning = false
     }
 
@@ -113,6 +117,42 @@ final class Store: ObservableObject {
         prefs.columnOrder = ids
         savePrefs()
     }
+
+    // MARK: Selection
+
+    /// Click = select only this, ⌘-click = toggle, ⇧-click = range within `list` (the column's visible order).
+    func click(_ s: Session, in list: [Session]) {
+        let mods = NSEvent.modifierFlags
+        if mods.contains(.shift), let anchor = selectionAnchor,
+           let a = list.firstIndex(where: { $0.id == anchor }), let b = list.firstIndex(where: { $0.id == s.id }) {
+            selection.formUnion(list[min(a, b)...max(a, b)].map(\.id))
+            return
+        }
+        if mods.contains(.command) {
+            toggle(s)
+        } else {
+            selection = selection == [s.id] ? [] : [s.id]
+            selectionAnchor = s.id
+        }
+    }
+
+    func toggle(_ s: Session) {
+        if selection.contains(s.id) { selection.remove(s.id) } else { selection.insert(s.id) }
+        selectionAnchor = s.id
+    }
+
+    func select(_ list: [Session]) { selection.formUnion(list.map(\.id)) }
+
+    func clearSelection() { selection = []; selectionAnchor = nil }
+
+    /// What an action on `s` applies to: the whole selection if `s` is part of it, otherwise just `s`.
+    func group(for s: Session) -> [Session] {
+        guard selection.contains(s.id) else { return [s] }
+        return sessions.filter { selection.contains($0.id) }
+    }
+
+    /// Drag payload: newline-separated card ids.
+    func dragPayload(for s: Session) -> String { group(for: s).map(\.id).joined(separator: "\n") }
 
     // MARK: Staging
 

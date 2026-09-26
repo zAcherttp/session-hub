@@ -10,6 +10,7 @@ A small macOS app for people who switch between several Claude accounts. It show
   - **Fork here:** `claude --resume <id> --fork-session` in the session's folder.
   - **Fork into a new worktree:** creates `.claude/worktrees/fork-…` from the session's current commit, so both sessions can edit in parallel.
   - **Resume:** continues the same session ID.
+- **Bulk select.** Every card has a checkbox. Click a card to select it (it gets a highlighted border), ⌘-click to add or remove cards, and ⇧-click to select a range. Dragging any selected card moves the whole selection, and right-click actions apply to all selected cards.
 - **Archive filter.** Switch between Active, Archived, or All sessions from the toolbar.
 - **This Mac only.** Sessions whose working folder isn't on this machine are hidden. The app refuses to write anything other than `local_*.json` files in Claude's session folders.
 
