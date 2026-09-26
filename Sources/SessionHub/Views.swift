@@ -49,7 +49,7 @@ struct SessionHubApp: App {
                         if let w = NSApp.windows.first(where: { $0.canBecomeMain }) {
                             var f = w.frame
                             f.origin.y += f.height - 900
-                            f.size = NSSize(width: 1690, height: 900)
+                            f.size = NSSize(width: 1960, height: 900)
                             w.setFrame(f, display: true)
                         }
                     }
@@ -106,7 +106,8 @@ struct BoardView: View {
     private var board: some View {
         ScrollView(.horizontal) {
             HStack(alignment: .top, spacing: Metrics.windowPadding) {
-                ForEach(store.orderedColumns.filter { $0.kind != .stash && !store.prefs.hiddenColumns.contains($0.id) }) { column in
+                // The Stash is always the first column (orderedColumns keeps it there).
+                ForEach(store.orderedColumns.filter { !store.prefs.hiddenColumns.contains($0.id) }) { column in
                     columnView(column)
                 }
             }
@@ -406,8 +407,10 @@ struct ColumnView: View {
                     }
                     Divider()
                     Button("Rename…") { draft = store.name(for: column); editing = true }
-                    Button("Move column left") { store.moveColumn(column, by: -1) }
-                    Button("Move column right") { store.moveColumn(column, by: 1) }
+                    if column.kind != .stash {
+                        Button("Move column left") { store.moveColumn(column, by: -1) }
+                        Button("Move column right") { store.moveColumn(column, by: 1) }
+                    }
                     if case .desktop = column.kind {
                         Divider()
                         Button("Copy account ID") { Launcher.copy(column.accountUuid ?? "") }
@@ -810,19 +813,16 @@ struct ShapePopover: View {
     }
 }
 
-/// A standard macOS sidebar, like Music's: status filters (with counts) and the Stash.
-/// Dropping cards anywhere on it stashes them; dragging a stashed row onto an account restores it.
+/// A standard macOS sidebar with status filters and counts; picking one filters every column.
 struct SidebarView: View {
     @Environment(Store.self) private var store
     let archiveFilter: ArchiveFilter
     let onAction: ([Session], Launcher.Mode) -> Void
-    @State private var dropTargeted = false
 
     var body: some View {
         @Bindable var store = store
         let boardSessions = store.sessions.filter { !$0.isStashed && archiveFilter.includes($0) }
         let counts = Dictionary(grouping: boardSessions, by: \.status).mapValues(\.count)
-        let stashed = store.columnItems["stash"] ?? []
 
         List(selection: $store.sidebarFilter) {
             Section("Board") {
@@ -839,77 +839,8 @@ struct SidebarView: View {
                     .tag(SidebarFilter.status(status))
                 }
             }
-            Section {
-                if stashed.isEmpty {
-                    Text("Drop sessions here to stash them")
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                ForEach(stashed) { s in
-                    StashRow(session: s)
-                        .draggable(store.dragPayload(for: s)) { DragPreview(session: s, count: 1) }
-                        .contextMenu { stashMenu(s) }
-                }
-            } header: {
-                HStack {
-                    Text("Stash")
-                    Spacer()
-                    if !stashed.isEmpty { Text("\(stashed.count)").monospacedDigit() }
-                }
-            }
         }
         .listStyle(.sidebar)
-        .overlay {
-            if dropTargeted {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(.tint, lineWidth: 2)
-                    .padding(6)
-                    .allowsHitTesting(false)
-            }
-        }
-        .dropDestination(for: String.self) { payloads, _ in
-            let ids = payloads.filter { !$0.hasPrefix(ColumnView.dragPrefix) }
-                .flatMap { $0.split(separator: "\n").map(String.init) }
-            let stash = store.column("stash")
-            for id in ids where !(store.sessions.first { $0.id == id }?.isStashed ?? true) {
-                _ = store.drop(cardId: id, on: stash, copy: false)
-            }
-            store.clearSelection()
-            return !ids.isEmpty
-        } isTargeted: { dropTargeted = $0 }
-    }
-
-    @ViewBuilder private func stashMenu(_ s: Session) -> some View {
-        Menu("Restore to") {
-            ForEach(store.orderedColumns.filter { if case .desktop = $0.kind { return true } else { return false } }) { c in
-                Button(store.name(for: c)) { _ = store.drop(cardId: s.id, on: c, copy: false) }
-            }
-        }
-        if store.pending[s.id] != nil { Button("Cancel pending change") { store.pending[s.id] = nil } }
-        Divider()
-        Button("Copy fork command") { onAction([s], .fork) }
-        Button("Copy resume command") { onAction([s], .resume) }
-        Divider()
-        Button("Reveal transcript in Finder") { NSWorkspace.shared.activateFileViewerSelecting([s.transcriptURL]) }
-    }
-}
-
-struct StashRow: View {
-    @Environment(Store.self) private var store
-    let session: Session
-
-    var body: some View {
-        let move = store.pending[session.id]
-        VStack(alignment: .leading, spacing: 2) {
-            Text(session.title).lineLimit(1)
-            HStack(spacing: 4) {
-                Image(systemName: session.status.symbol).foregroundStyle(session.status.color)
-                Text(session.repoName)
-                if let m = move { Text("→ " + store.name(for: store.column(m.to))).foregroundStyle(.orange) }
-            }
-            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-        }
-        .padding(.vertical, 2)
-        .help(session.statusReason)
     }
 }
 
