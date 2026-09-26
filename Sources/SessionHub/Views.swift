@@ -276,7 +276,6 @@ struct ColumnView: View {
             RoundedRectangle(cornerRadius: Metrics.columnRadius, style: .continuous)
                 .strokeBorder(targeted ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(0.07)), lineWidth: targeted ? 2 : 1)
         )
-        .animation(.smooth(duration: 0.2), value: targeted)
         .dropDestination(for: String.self) { ids, _ in
             // Column header dropped here → reorder columns.
             if let c = ids.first(where: { $0.hasPrefix(ColumnView.dragPrefix) }) {
