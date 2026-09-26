@@ -6,6 +6,11 @@ struct SessionHubApp: App {
     @State private var store = Store()
 
     init() {
+        // `SessionHub --schema` prints the observed data shape (used to regenerate the bundled baseline).
+        if CommandLine.arguments.contains("--schema") {
+            FileHandle.standardOutput.write(Scanner().scan().shape.encoded())
+            exit(0)
+        }
         // `SessionHub --dump` prints what the scanner sees, for debugging without the UI.
         if CommandLine.arguments.contains("--dump") {
             let r = Scanner().scan()
@@ -13,10 +18,15 @@ struct SessionHubApp: App {
             for c in r.columns {
                 let items = r.sessions.filter { $0.columnId == c.id }
                 print("\(c.id): \(items.count) sessions, \(items.filter(\.isArchived).count) archived, \(items.filter(\.isWorktree).count) in worktrees")
+                let byStatus = Dictionary(grouping: items.filter { !$0.isArchived }, by: \.status)
+                print("   active by status:", SessionStatus.allCases.compactMap { st in byStatus[st].map { "\(st.label) \($0.count)" } }.joined(separator: ", "))
                 for s in items.sorted(by: { $0.lastActivity > $1.lastActivity }).prefix(3) {
                     print("   \(s.title.prefix(60)) | \(s.repoName) | \(s.branch ?? "-")")
                 }
             }
+            let drift = ShapeDrift.compare(observed: r.shape, baseline: ShapeStore.loadBaseline())
+            print("shape: \(drift.breaking.count) breaking, \(drift.info.count) changed")
+            drift.items.prefix(10).forEach { print("   ", $0.severity == .breaking ? "BREAKING" : "changed", $0.text) }
             if let wt = r.sessions.first(where: { $0.isWorktree && !$0.cwdExists }) ?? r.sessions.first(where: \.isWorktree) {
                 print("\nsample fork:", Launcher.command(for: wt, mode: .fork))
                 print("sample new worktree:", Launcher.command(for: wt, mode: .forkNewWorktree))
@@ -56,6 +66,8 @@ struct BoardView: View {
     @State private var forkRequest: ForkRequest?
     @State private var confirmApply = false
     @State private var showColumns = false
+    @State private var showShape = false
+    @AppStorage("sortByStatus") private var sortByStatus = true
 
     @Namespace private var dock
 
@@ -110,6 +122,26 @@ struct BoardView: View {
             .pickerStyle(.segmented)
             .help("Filter by archived state (CLI sessions are never archived)")
         }
+        ToolbarItem {
+            Menu {
+                Picker("Sort", selection: $sortByStatus) {
+                    Label("Status, then recent", systemImage: "list.bullet.indent").tag(true)
+                    Label("Most recent", systemImage: "clock").tag(false)
+                }
+                .pickerStyle(.inline)
+            } label: { Label("Sort", systemImage: "arrow.up.arrow.down") }
+            .help("Sort cards within each column")
+        }
+        ToolbarItem {
+            Button { showShape.toggle() } label: {
+                Label("Data shape", systemImage: store.drift.isBreaking ? "exclamationmark.octagon.fill"
+                      : store.drift.items.isEmpty ? "checkmark.seal" : "exclamationmark.triangle")
+            }
+            .foregroundStyle(store.drift.isBreaking ? AnyShapeStyle(.red) : store.drift.items.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.orange))
+            .help(store.drift.isBreaking ? "Claude's data format changed in a way Session Hub depends on; moves are paused"
+                  : store.drift.items.isEmpty ? "Claude's data format matches the baseline" : "Claude's data format has new or changed fields")
+            .popover(isPresented: $showShape, arrowEdge: .bottom) { ShapePopover() }
+        }
         ToolbarItemGroup {
             // A popover (not a menu) so it stays open while several columns are toggled —
             // macOS menus always close on click.
@@ -149,10 +181,11 @@ struct BoardView: View {
                         }
                         Button("Discard") { store.discardPending() }.glassButton()
                         Button("Apply") { confirmApply = true }
+                            .help(store.writesBlocked ? "Paused: Claude's data format changed (see Data shape)" : "Apply staged changes")
                             .glassButton(prominent: true)
                             .tint(.orange)
                             .keyboardShortcut(.return, modifiers: .command)
-                            .disabled(store.isApplying)
+                            .disabled(store.isApplying || store.writesBlocked)
                     }
                     .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
                     .glassPanel(in: Capsule())
@@ -241,11 +274,15 @@ struct ColumnView: View {
     /// Cards built up front per column; more load on demand to keep SwiftUI's view state small.
     @State private var limit = 50
 
+    @AppStorage("sortByStatus") private var sortByStatus = true
+
     private var items: [Session] {
         let q = search.lowercased()
-        return (store.columnItems[column.id] ?? []).filter { s in
+        let filtered = (store.columnItems[column.id] ?? []).filter { s in
             (column.kind == .stash || archiveFilter.includes(s)) && (q.isEmpty || s.searchKey.contains(q))
         }
+        guard sortByStatus else { return filtered }   // already newest first
+        return filtered.sorted { ($0.status.rawValue, $1.lastActivity) < ($1.status.rawValue, $0.lastActivity) }
     }
 
     var body: some View {
@@ -341,6 +378,13 @@ struct ColumnView: View {
                 Text("\(count)").font(.callout.monospacedDigit()).foregroundStyle(.secondary)
                 Menu {
                     Button("Select all in column") { store.select(items) }
+                    if column.kind != .stash {
+                        let done = (store.columnItems[column.id] ?? []).filter { $0.status == .done && $0.columnId == column.id }
+                        Button("Stash all Done (\(done.count))") {
+                            for s in done { _ = store.drop(cardId: s.id, on: store.column("stash"), copy: false) }
+                        }
+                        .disabled(done.isEmpty)
+                    }
                     Divider()
                     Button("Rename…") { draft = store.name(for: column); editing = true }
                     Button("Move column left") { store.moveColumn(column, by: -1) }
@@ -399,22 +443,28 @@ struct SessionCard: View {
             if let st = s.statusLine {
                 Text(st).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
+            // Status and time get their own row so chips never truncate.
             HStack(spacing: 6) {
-                if s.isWorktree {
-                    tag(s.cwdExists ? "worktree" : "worktree gone", color: s.cwdExists ? .purple : .red)
-                }
-                if s.isArchived { tag("archived", color: .gray) }
-                if s.prCount > 0 { tag("\(s.prCount) PR", color: .blue) }
-                if let m = move {
-                    tag((m.copy ? "+ " : "→ ") + store.name(for: store.column(m.to)), color: .orange)
-                }
-                let shared = store.sharedWith(s)
-                if !shared.isEmpty {
-                    tag("shared ×\(shared.count + 1)", color: .teal)
-                        .help("Also in: " + shared.map { store.name(for: store.column($0)) }.joined(separator: ", "))
-                }
-                Spacer()
+                StatusChip(status: s.status, reason: s.statusReason)
+                Spacer(minLength: 4)
                 RelativeTime(date: s.lastActivity)
+            }
+            let shared = store.sharedWith(s)
+            if s.isWorktree || s.isArchived || s.prCount > 0 || move != nil || !shared.isEmpty {
+                HStack(spacing: 6) {
+                    if s.isWorktree {
+                        tag(s.cwdExists ? "worktree" : "worktree gone", color: s.cwdExists ? .purple : .red)
+                    }
+                    if s.isArchived { tag("archived", color: .gray) }
+                    if s.prCount > 0 { tag("\(s.prCount) PR", color: .blue) }
+                    if let m = move {
+                        tag((m.copy ? "+ " : "→ ") + store.name(for: store.column(m.to)), color: .orange)
+                    }
+                    if !shared.isEmpty {
+                        tag("shared ×\(shared.count + 1)", color: .teal)
+                            .help("Also in: " + shared.map { store.name(for: store.column($0)) }.joined(separator: ", "))
+                    }
+            }
             }
         }
         .padding(10)
@@ -474,7 +524,7 @@ struct SessionCard: View {
     }
 
     private func tag(_ text: String, color: Color) -> some View {
-        Text(text).font(.caption2.weight(.medium)).lineLimit(1)
+        Text(text).font(.caption2.weight(.medium)).lineLimit(1).truncationMode(.middle)
             .padding(.horizontal, 5).padding(.vertical, 1)
             .background(color.opacity(0.15), in: Capsule()).foregroundStyle(color)
     }
@@ -601,9 +651,9 @@ struct RelativeTime: View {
 
     var body: some View {
         let now = MinuteClock.shared.now
-        Text(now.timeIntervalSince(date) < 60 ? "just now" : Self.formatter.localizedString(for: date, relativeTo: now))
-            .font(.caption2).foregroundStyle(.tertiary)
-            .help(date.formatted(date: .abbreviated, time: .shortened))
+        Text(now.timeIntervalSince(date) < 60 ? "active just now" : "active " + Self.formatter.localizedString(for: date, relativeTo: now))
+            .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+            .help("Last activity: " + date.formatted(date: .abbreviated, time: .shortened))
     }
 }
 
@@ -633,5 +683,92 @@ struct ColumnsPopover: View {
         }
         .padding(16)
         .frame(minWidth: 280)
+    }
+}
+
+struct StatusChip: View {
+    let status: SessionStatus
+    let reason: String
+
+    private var color: Color {
+        switch status {
+        case .running: return .green
+        case .needsYou: return .orange
+        case .interrupted: return .red
+        case .inReview: return .blue
+        case .idle: return .gray
+        case .done: return .mint
+        }
+    }
+
+    var body: some View {
+        Label(status.label, systemImage: status.symbol)
+            .labelStyle(.titleAndIcon)
+            .font(.caption2.weight(.semibold)).lineLimit(1).fixedSize()
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .background(color.opacity(0.16), in: Capsule())
+            .foregroundStyle(color)
+            .help(reason)
+    }
+}
+
+struct ShapePopover: View {
+    @Environment(Store.self) private var store
+
+    var body: some View {
+        let drift = store.drift
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Claude data shape").font(.headline)
+                Spacer()
+                if drift.isBreaking {
+                    Label("Moves paused", systemImage: "exclamationmark.octagon.fill").foregroundStyle(.red)
+                } else if drift.items.isEmpty {
+                    Label("Matches baseline", systemImage: "checkmark.seal").foregroundStyle(.secondary)
+                } else {
+                    Label("\(drift.info.count) change(s)", systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
+                }
+            }
+            .font(.callout)
+            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
+                GridRow {
+                    Text("Claude Desktop").foregroundStyle(.secondary)
+                    Text(store.shape.claudeDesktopVersion ?? "?").monospacedDigit()
+                }
+                GridRow {
+                    Text("Claude Code").foregroundStyle(.secondary)
+                    Text(store.shape.claudeCodeVersion ?? "?").monospacedDigit()
+                }
+            }
+            .font(.caption)
+            if !drift.items.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(drift.breaking) { Label($0.text, systemImage: "xmark.octagon").foregroundStyle(.red) }
+                        ForEach(drift.info) { Label($0.text, systemImage: "plus.circle").foregroundStyle(.secondary) }
+                    }
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 220)
+            }
+            Text(drift.isBreaking
+                 ? "Fields or folders Session Hub relies on have changed. Moving and stashing are paused until the app is updated for the new format."
+                 : "New fields and values are informational. Accept them once you've checked a Claude update behaves as expected.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Show snapshots") {
+                    try? FileManager.default.createDirectory(at: ShapeStore.snapshots, withIntermediateDirectories: true)
+                    NSWorkspace.shared.open(ShapeStore.snapshots)
+                }
+                Button("Copy report") { Launcher.copy(store.shapeReport) }
+                Spacer()
+                Button("Accept as baseline") { store.acceptShape() }
+                    .disabled(drift.items.isEmpty)
+                    .help("Treat the current format as expected from now on")
+            }
+        }
+        .padding(16)
+        .frame(width: 440)
     }
 }

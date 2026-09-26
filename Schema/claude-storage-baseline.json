@@ -1,0 +1,1717 @@
+{
+  "claudeCodeVersion" : "2.1.283",
+  "claudeDesktopVersion" : "2.9939.2",
+  "enums" : {
+    "desktopSession.postTurnSummary.status_category" : [
+      "completed",
+      "review_ready",
+      "blocked"
+    ],
+    "desktopSession.prs[].state" : [
+      "CLOSED",
+      "MERGED",
+      "OPEN"
+    ],
+    "transcript.entrypoint" : [
+      "cli",
+      "sdk-cli",
+      "claude-desktop"
+    ],
+    "version.claudeCode" : [
+      "2.1.235",
+      "2.1.273",
+      "2.1.246",
+      "2.1.266",
+      "2.1.260",
+      "2.1.238",
+      "2.1.234",
+      "2.1.258",
+      "2.1.237",
+      "2.1.275",
+      "2.1.271",
+      "2.1.278",
+      "2.1.274",
+      "2.1.277",
+      "2.1.255",
+      "2.1.280",
+      "2.1.247",
+      "2.1.282",
+      "2.1.281",
+      "2.1.270",
+      "2.1.283"
+    ]
+  },
+  "generatedAt" : "2026-09-26T05:27:08Z",
+  "layout" : {
+    "claude-code-sessions folder" : true,
+    "claude-code-sessions\/<account>\/<org> folders" : true,
+    "config.json lastKnownAccountUuid" : true,
+    "git-worktrees.json" : true,
+    "~\/.claude\/projects folder" : true
+  },
+  "records" : {
+    "desktopSession" : {
+      "count" : 506,
+      "fields" : {
+        "alwaysAllowedReasons" : {
+          "count" : 506,
+          "types" : [
+            "array"
+          ]
+        },
+        "autoArchiveExempt" : {
+          "count" : 15,
+          "types" : [
+            "bool"
+          ]
+        },
+        "autoChosenInApp" : {
+          "count" : 74,
+          "types" : [
+            "bool"
+          ]
+        },
+        "autoFixNoticeSent" : {
+          "count" : 31,
+          "types" : [
+            "bool"
+          ]
+        },
+        "autoModeServerFallbackPrompt" : {
+          "count" : 27,
+          "types" : [
+            "bool"
+          ]
+        },
+        "backgroundTaskSuggestions" : {
+          "count" : 4,
+          "types" : [
+            "array"
+          ]
+        },
+        "branch" : {
+          "count" : 279,
+          "types" : [
+            "null",
+            "string"
+          ]
+        },
+        "bridgeSessionIds" : {
+          "count" : 335,
+          "types" : [
+            "array"
+          ]
+        },
+        "chromePermissionMode" : {
+          "count" : 494,
+          "types" : [
+            "string"
+          ]
+        },
+        "classifierSummaryEnabled" : {
+          "count" : 480,
+          "types" : [
+            "bool"
+          ]
+        },
+        "cliSessionId" : {
+          "count" : 504,
+          "types" : [
+            "string"
+          ]
+        },
+        "completedTurns" : {
+          "count" : 486,
+          "types" : [
+            "number"
+          ]
+        },
+        "createdAt" : {
+          "count" : 506,
+          "types" : [
+            "number"
+          ]
+        },
+        "cuAllowedApps" : {
+          "count" : 4,
+          "types" : [
+            "array"
+          ]
+        },
+        "cuGrantFlags" : {
+          "count" : 4,
+          "types" : [
+            "object"
+          ]
+        },
+        "cwd" : {
+          "count" : 506,
+          "types" : [
+            "string"
+          ]
+        },
+        "effort" : {
+          "count" : 480,
+          "types" : [
+            "string"
+          ]
+        },
+        "effortInherited" : {
+          "count" : 14,
+          "types" : [
+            "bool"
+          ]
+        },
+        "enabledMcpTools" : {
+          "count" : 436,
+          "types" : [
+            "object"
+          ]
+        },
+        "error" : {
+          "count" : 4,
+          "types" : [
+            "string"
+          ]
+        },
+        "errorAt" : {
+          "count" : 4,
+          "types" : [
+            "number"
+          ]
+        },
+        "forkedAtMessageUuid" : {
+          "count" : 12,
+          "types" : [
+            "string"
+          ]
+        },
+        "forkedFromSessionId" : {
+          "count" : 39,
+          "types" : [
+            "string"
+          ]
+        },
+        "gitAnchors" : {
+          "count" : 27,
+          "types" : [
+            "array"
+          ]
+        },
+        "gitAnchorsLookupOnly" : {
+          "count" : 1,
+          "types" : [
+            "bool"
+          ]
+        },
+        "indexedAt" : {
+          "count" : 31,
+          "types" : [
+            "number"
+          ]
+        },
+        "isArchived" : {
+          "count" : 506,
+          "types" : [
+            "bool"
+          ]
+        },
+        "isStarred" : {
+          "count" : 14,
+          "types" : [
+            "bool"
+          ]
+        },
+        "keptDirtyAt" : {
+          "count" : 8,
+          "types" : [
+            "number"
+          ]
+        },
+        "keptDirtyWorktree" : {
+          "count" : 8,
+          "types" : [
+            "bool"
+          ]
+        },
+        "lastActivityAt" : {
+          "count" : 506,
+          "types" : [
+            "number"
+          ]
+        },
+        "lastAssistantUuid" : {
+          "count" : 51,
+          "types" : [
+            "string"
+          ]
+        },
+        "lastFocusedAt" : {
+          "count" : 505,
+          "types" : [
+            "number"
+          ]
+        },
+        "lastSpawnRootDetected" : {
+          "count" : 506,
+          "types" : [
+            "bool"
+          ]
+        },
+        "latestUserFrameAt" : {
+          "count" : 111,
+          "types" : [
+            "number"
+          ]
+        },
+        "model" : {
+          "count" : 506,
+          "types" : [
+            "string"
+          ]
+        },
+        "originCwd" : {
+          "count" : 506,
+          "types" : [
+            "string"
+          ]
+        },
+        "peerReceipts" : {
+          "count" : 7,
+          "types" : [
+            "array"
+          ]
+        },
+        "pendingSystemReminder" : {
+          "count" : 67,
+          "types" : [
+            "string"
+          ]
+        },
+        "permissionMode" : {
+          "count" : 506,
+          "types" : [
+            "string"
+          ]
+        },
+        "postTurnSummary" : {
+          "count" : 49,
+          "types" : [
+            "object"
+          ]
+        },
+        "postTurnSummaryFor" : {
+          "count" : 49,
+          "types" : [
+            "string"
+          ]
+        },
+        "previousTitles" : {
+          "count" : 5,
+          "types" : [
+            "array"
+          ]
+        },
+        "priorCliSessionIds" : {
+          "count" : 85,
+          "types" : [
+            "array"
+          ]
+        },
+        "priorErrorMark" : {
+          "count" : 8,
+          "types" : [
+            "object"
+          ]
+        },
+        "promptAppendSnapshot" : {
+          "count" : 380,
+          "types" : [
+            "object"
+          ]
+        },
+        "prs" : {
+          "count" : 274,
+          "types" : [
+            "array"
+          ]
+        },
+        "publishedArtifacts" : {
+          "count" : 3,
+          "types" : [
+            "array"
+          ]
+        },
+        "remoteControlAutoEligible" : {
+          "count" : 474,
+          "types" : [
+            "bool"
+          ]
+        },
+        "remoteMcpServersConfig" : {
+          "count" : 506,
+          "types" : [
+            "array"
+          ]
+        },
+        "reportFindingsCard" : {
+          "count" : 506,
+          "types" : [
+            "bool"
+          ]
+        },
+        "resolvedBackgroundTaskSuggestions" : {
+          "count" : 124,
+          "types" : [
+            "object"
+          ]
+        },
+        "rewindEdges" : {
+          "count" : 6,
+          "types" : [
+            "array"
+          ]
+        },
+        "scheduledRunContinued" : {
+          "count" : 6,
+          "types" : [
+            "bool"
+          ]
+        },
+        "scheduledTaskId" : {
+          "count" : 26,
+          "types" : [
+            "string"
+          ]
+        },
+        "seenCommentIds" : {
+          "count" : 31,
+          "types" : [
+            "object"
+          ]
+        },
+        "sessionId" : {
+          "count" : 506,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionPermissionUpdates" : {
+          "count" : 506,
+          "types" : [
+            "array"
+          ]
+        },
+        "sessionSettings" : {
+          "count" : 48,
+          "types" : [
+            "object"
+          ]
+        },
+        "sourceBranch" : {
+          "count" : 272,
+          "types" : [
+            "null",
+            "string"
+          ]
+        },
+        "spawnSeed" : {
+          "count" : 506,
+          "types" : [
+            "object"
+          ]
+        },
+        "spawnedFrom" : {
+          "count" : 221,
+          "types" : [
+            "object"
+          ]
+        },
+        "spawnedFromEndNotified" : {
+          "count" : 205,
+          "types" : [
+            "bool"
+          ]
+        },
+        "steeredByRemoteClient" : {
+          "count" : 112,
+          "types" : [
+            "null",
+            "bool"
+          ]
+        },
+        "title" : {
+          "count" : 506,
+          "types" : [
+            "string"
+          ]
+        },
+        "titleSource" : {
+          "count" : 226,
+          "types" : [
+            "string"
+          ]
+        },
+        "titleTurn" : {
+          "count" : 92,
+          "types" : [
+            "number"
+          ]
+        },
+        "toolSurfaceSnapshot" : {
+          "count" : 220,
+          "types" : [
+            "object"
+          ]
+        },
+        "transcriptModelStates" : {
+          "count" : 6,
+          "types" : [
+            "object"
+          ]
+        },
+        "worktreeName" : {
+          "count" : 29,
+          "types" : [
+            "string"
+          ]
+        },
+        "worktreePath" : {
+          "count" : 30,
+          "types" : [
+            "string",
+            "null"
+          ]
+        },
+        "writtenBranches" : {
+          "count" : 186,
+          "types" : [
+            "array"
+          ]
+        }
+      }
+    },
+    "desktopSession.postTurnSummary" : {
+      "count" : 49,
+      "fields" : {
+        "needs_action" : {
+          "count" : 49,
+          "types" : [
+            "string"
+          ]
+        },
+        "status_category" : {
+          "count" : 49,
+          "types" : [
+            "string"
+          ]
+        },
+        "status_detail" : {
+          "count" : 49,
+          "types" : [
+            "string"
+          ]
+        },
+        "summarizes_uuid" : {
+          "count" : 49,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "desktopSession.prs[]" : {
+      "count" : 632,
+      "fields" : {
+        "autoFix" : {
+          "count" : 35,
+          "types" : [
+            "bool"
+          ]
+        },
+        "baseRef" : {
+          "count" : 632,
+          "types" : [
+            "string"
+          ]
+        },
+        "branch" : {
+          "count" : 632,
+          "types" : [
+            "string"
+          ]
+        },
+        "dismissed" : {
+          "count" : 365,
+          "types" : [
+            "bool"
+          ]
+        },
+        "host" : {
+          "count" : 632,
+          "types" : [
+            "string"
+          ]
+        },
+        "own" : {
+          "count" : 97,
+          "types" : [
+            "bool"
+          ]
+        },
+        "prNumber" : {
+          "count" : 632,
+          "types" : [
+            "number"
+          ]
+        },
+        "provider" : {
+          "count" : 574,
+          "types" : [
+            "string"
+          ]
+        },
+        "repo" : {
+          "count" : 632,
+          "types" : [
+            "string"
+          ]
+        },
+        "state" : {
+          "count" : 632,
+          "types" : [
+            "string"
+          ]
+        },
+        "url" : {
+          "count" : 632,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.agent-name" : {
+      "count" : 14,
+      "fields" : {
+        "agentName" : {
+          "count" : 14,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 14,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 14,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.ai-title" : {
+      "count" : 19,
+      "fields" : {
+        "aiTitle" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.artifact-autoreact-ledger" : {
+      "count" : 1,
+      "fields" : {
+        "accountUuid" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        },
+        "artifacts" : {
+          "count" : 1,
+          "types" : [
+            "object"
+          ]
+        },
+        "sessionId" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        },
+        "v" : {
+          "count" : 1,
+          "types" : [
+            "number"
+          ]
+        }
+      }
+    },
+    "transcript.artifact-comment-monitor" : {
+      "count" : 2,
+      "fields" : {
+        "artifacts" : {
+          "count" : 2,
+          "types" : [
+            "object"
+          ]
+        },
+        "sessionId" : {
+          "count" : 2,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 2,
+          "types" : [
+            "string"
+          ]
+        },
+        "v" : {
+          "count" : 2,
+          "types" : [
+            "number"
+          ]
+        }
+      }
+    },
+    "transcript.assistant" : {
+      "count" : 452,
+      "fields" : {
+        "advisorModel" : {
+          "count" : 78,
+          "types" : [
+            "string"
+          ]
+        },
+        "apiBlockIndex" : {
+          "count" : 370,
+          "types" : [
+            "number"
+          ]
+        },
+        "apiErrorStatus" : {
+          "count" : 5,
+          "types" : [
+            "number"
+          ]
+        },
+        "attributionMcpServer" : {
+          "count" : 53,
+          "types" : [
+            "string"
+          ]
+        },
+        "attributionMcpTool" : {
+          "count" : 53,
+          "types" : [
+            "string"
+          ]
+        },
+        "attributionPlugin" : {
+          "count" : 21,
+          "types" : [
+            "string"
+          ]
+        },
+        "attributionSkill" : {
+          "count" : 29,
+          "types" : [
+            "string"
+          ]
+        },
+        "cwd" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "effort" : {
+          "count" : 446,
+          "types" : [
+            "string"
+          ]
+        },
+        "entrypoint" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "error" : {
+          "count" : 6,
+          "types" : [
+            "string"
+          ]
+        },
+        "gitBranch" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "isApiErrorMessage" : {
+          "count" : 6,
+          "types" : [
+            "bool"
+          ]
+        },
+        "isSidechain" : {
+          "count" : 452,
+          "types" : [
+            "bool"
+          ]
+        },
+        "message" : {
+          "count" : 452,
+          "types" : [
+            "object"
+          ]
+        },
+        "parentUuid" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "perTurnEffort" : {
+          "count" : 141,
+          "types" : [
+            "null",
+            "string"
+          ]
+        },
+        "quotaLimits" : {
+          "count" : 5,
+          "types" : [
+            "object"
+          ]
+        },
+        "requestId" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "serverClassifierRequest" : {
+          "count" : 2,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "session_id" : {
+          "count" : 5,
+          "types" : [
+            "string"
+          ]
+        },
+        "slug" : {
+          "count" : 50,
+          "types" : [
+            "string"
+          ]
+        },
+        "timestamp" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "userType" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "uuid" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "version" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "wireIngestContext" : {
+          "count" : 1,
+          "types" : [
+            "object"
+          ]
+        },
+        "wireToolInputs" : {
+          "count" : 1,
+          "types" : [
+            "object"
+          ]
+        }
+      }
+    },
+    "transcript.assistant.message" : {
+      "count" : 452,
+      "fields" : {
+        "container" : {
+          "count" : 224,
+          "types" : [
+            "null"
+          ]
+        },
+        "content" : {
+          "count" : 452,
+          "types" : [
+            "array"
+          ]
+        },
+        "context_management" : {
+          "count" : 224,
+          "types" : [
+            "null"
+          ]
+        },
+        "diagnostics" : {
+          "count" : 452,
+          "types" : [
+            "object",
+            "null"
+          ]
+        },
+        "id" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "input_transformations" : {
+          "count" : 194,
+          "types" : [
+            "array"
+          ]
+        },
+        "model" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "role" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "stop_details" : {
+          "count" : 452,
+          "types" : [
+            "object",
+            "null"
+          ]
+        },
+        "stop_reason" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "stop_sequence" : {
+          "count" : 452,
+          "types" : [
+            "null",
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 452,
+          "types" : [
+            "string"
+          ]
+        },
+        "usage" : {
+          "count" : 452,
+          "types" : [
+            "object"
+          ]
+        }
+      }
+    },
+    "transcript.atis-latch" : {
+      "count" : 35,
+      "fields" : {
+        "atis" : {
+          "count" : 35,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 35,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 35,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.attachment" : {
+      "count" : 19,
+      "fields" : {
+        "attachment" : {
+          "count" : 19,
+          "types" : [
+            "object"
+          ]
+        },
+        "cwd" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        },
+        "entrypoint" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        },
+        "gitBranch" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        },
+        "isSidechain" : {
+          "count" : 19,
+          "types" : [
+            "bool"
+          ]
+        },
+        "parentUuid" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        },
+        "rendered" : {
+          "count" : 19,
+          "types" : [
+            "array"
+          ]
+        },
+        "sessionId" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        },
+        "timestamp" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        },
+        "userType" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        },
+        "uuid" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        },
+        "version" : {
+          "count" : 19,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.bridge-session" : {
+      "count" : 1,
+      "fields" : {
+        "bridgeSessionId" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        },
+        "lastSequenceNum" : {
+          "count" : 1,
+          "types" : [
+            "number"
+          ]
+        },
+        "ownerAccountUuid" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        },
+        "ownerOrganizationUuid" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.cost-state" : {
+      "count" : 9,
+      "fields" : {
+        "hasUnknownModelCost" : {
+          "count" : 9,
+          "types" : [
+            "bool"
+          ]
+        },
+        "modelUsage" : {
+          "count" : 9,
+          "types" : [
+            "object"
+          ]
+        },
+        "sessionId" : {
+          "count" : 9,
+          "types" : [
+            "string"
+          ]
+        },
+        "startTime" : {
+          "count" : 9,
+          "types" : [
+            "number"
+          ]
+        },
+        "totalAPIDuration" : {
+          "count" : 9,
+          "types" : [
+            "number"
+          ]
+        },
+        "totalAPIDurationWithoutRetries" : {
+          "count" : 9,
+          "types" : [
+            "number"
+          ]
+        },
+        "totalCostUSD" : {
+          "count" : 9,
+          "types" : [
+            "number"
+          ]
+        },
+        "totalDuration" : {
+          "count" : 9,
+          "types" : [
+            "number"
+          ]
+        },
+        "totalLinesAdded" : {
+          "count" : 9,
+          "types" : [
+            "number"
+          ]
+        },
+        "totalLinesRemoved" : {
+          "count" : 9,
+          "types" : [
+            "number"
+          ]
+        },
+        "totalToolDuration" : {
+          "count" : 9,
+          "types" : [
+            "number"
+          ]
+        },
+        "type" : {
+          "count" : 9,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.custom-title" : {
+      "count" : 26,
+      "fields" : {
+        "customTitle" : {
+          "count" : 26,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 26,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 26,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.file-history-snapshot" : {
+      "count" : 348,
+      "fields" : {
+        "isSnapshotUpdate" : {
+          "count" : 348,
+          "types" : [
+            "bool"
+          ]
+        },
+        "messageId" : {
+          "count" : 348,
+          "types" : [
+            "string"
+          ]
+        },
+        "snapshot" : {
+          "count" : 348,
+          "types" : [
+            "object"
+          ]
+        },
+        "type" : {
+          "count" : 348,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.last-prompt" : {
+      "count" : 6,
+      "fields" : {
+        "lastPrompt" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        },
+        "leafUuid" : {
+          "count" : 6,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 6,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 6,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.mode" : {
+      "count" : 41,
+      "fields" : {
+        "mode" : {
+          "count" : 41,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 41,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 41,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.permission-mode" : {
+      "count" : 13,
+      "fields" : {
+        "permissionMode" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.pr-link" : {
+      "count" : 16,
+      "fields" : {
+        "prNumber" : {
+          "count" : 16,
+          "types" : [
+            "number"
+          ]
+        },
+        "prRepository" : {
+          "count" : 16,
+          "types" : [
+            "string"
+          ]
+        },
+        "prUrl" : {
+          "count" : 16,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 16,
+          "types" : [
+            "string"
+          ]
+        },
+        "timestamp" : {
+          "count" : 16,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 16,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.queue-operation" : {
+      "count" : 250,
+      "fields" : {
+        "content" : {
+          "count" : 119,
+          "types" : [
+            "string"
+          ]
+        },
+        "operation" : {
+          "count" : 250,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 250,
+          "types" : [
+            "string"
+          ]
+        },
+        "timestamp" : {
+          "count" : 250,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 250,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.system" : {
+      "count" : 13,
+      "fields" : {
+        "commandRun" : {
+          "count" : 4,
+          "types" : [
+            "object"
+          ]
+        },
+        "compactMetadata" : {
+          "count" : 6,
+          "types" : [
+            "object"
+          ]
+        },
+        "content" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "cwd" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "entrypoint" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "gitBranch" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "isMeta" : {
+          "count" : 11,
+          "types" : [
+            "bool"
+          ]
+        },
+        "isSidechain" : {
+          "count" : 13,
+          "types" : [
+            "bool"
+          ]
+        },
+        "level" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "logicalParentUuid" : {
+          "count" : 6,
+          "types" : [
+            "string"
+          ]
+        },
+        "parentUuid" : {
+          "count" : 13,
+          "types" : [
+            "null",
+            "string"
+          ]
+        },
+        "sessionId" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "slug" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        },
+        "subtype" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "timestamp" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "userType" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "uuid" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        },
+        "version" : {
+          "count" : 13,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.user" : {
+      "count" : 205,
+      "fields" : {
+        "cwd" : {
+          "count" : 205,
+          "types" : [
+            "string"
+          ]
+        },
+        "entrypoint" : {
+          "count" : 205,
+          "types" : [
+            "string"
+          ]
+        },
+        "gitBranch" : {
+          "count" : 205,
+          "types" : [
+            "string"
+          ]
+        },
+        "interruptedMessageId" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        },
+        "isMeta" : {
+          "count" : 11,
+          "types" : [
+            "bool"
+          ]
+        },
+        "isSidechain" : {
+          "count" : 205,
+          "types" : [
+            "bool"
+          ]
+        },
+        "message" : {
+          "count" : 205,
+          "types" : [
+            "object"
+          ]
+        },
+        "origin" : {
+          "count" : 101,
+          "types" : [
+            "object"
+          ]
+        },
+        "parentUuid" : {
+          "count" : 205,
+          "types" : [
+            "null",
+            "string"
+          ]
+        },
+        "permissionMode" : {
+          "count" : 129,
+          "types" : [
+            "string"
+          ]
+        },
+        "promptId" : {
+          "count" : 198,
+          "types" : [
+            "string"
+          ]
+        },
+        "promptSource" : {
+          "count" : 129,
+          "types" : [
+            "string"
+          ]
+        },
+        "queueSkipAttachments" : {
+          "count" : 6,
+          "types" : [
+            "bool"
+          ]
+        },
+        "queueTranscriptOnly" : {
+          "count" : 2,
+          "types" : [
+            "bool"
+          ]
+        },
+        "serverClassifierContext" : {
+          "count" : 1,
+          "types" : [
+            "object"
+          ]
+        },
+        "sessionId" : {
+          "count" : 205,
+          "types" : [
+            "string"
+          ]
+        },
+        "sessionKind" : {
+          "count" : 1,
+          "types" : [
+            "string"
+          ]
+        },
+        "session_id" : {
+          "count" : 2,
+          "types" : [
+            "string"
+          ]
+        },
+        "slug" : {
+          "count" : 16,
+          "types" : [
+            "string"
+          ]
+        },
+        "sourceToolAssistantUUID" : {
+          "count" : 10,
+          "types" : [
+            "string"
+          ]
+        },
+        "timestamp" : {
+          "count" : 205,
+          "types" : [
+            "string"
+          ]
+        },
+        "toolDenialKind" : {
+          "count" : 2,
+          "types" : [
+            "string"
+          ]
+        },
+        "toolUseResult" : {
+          "count" : 10,
+          "types" : [
+            "string",
+            "object"
+          ]
+        },
+        "turnOrigin" : {
+          "count" : 18,
+          "types" : [
+            "string"
+          ]
+        },
+        "type" : {
+          "count" : 205,
+          "types" : [
+            "string"
+          ]
+        },
+        "userType" : {
+          "count" : 205,
+          "types" : [
+            "string"
+          ]
+        },
+        "uuid" : {
+          "count" : 205,
+          "types" : [
+            "string"
+          ]
+        },
+        "version" : {
+          "count" : 205,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    },
+    "transcript.user.message" : {
+      "count" : 205,
+      "fields" : {
+        "content" : {
+          "count" : 205,
+          "types" : [
+            "array",
+            "string"
+          ]
+        },
+        "role" : {
+          "count" : 205,
+          "types" : [
+            "string"
+          ]
+        }
+      }
+    }
+  }
+}

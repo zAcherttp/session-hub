@@ -14,6 +14,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/SessionHub "$APP/Contents/MacOS/SessionHub"
 stamp_sdk "$APP/Contents/MacOS/SessionHub"
 cp Info.plist "$APP/Contents/Info.plist"
+mkdir -p "$APP/Contents/Resources"
+cp Schema/claude-storage-baseline.json "$APP/Contents/Resources/"
 codesign --force --sign - "$APP"
 mkdir -p ~/Applications
 rm -rf ~/Applications/SessionHub.app

@@ -80,6 +80,15 @@ struct Session: Identifiable, Hashable {
     let cwdExists: Bool
     /// Lowercased title + folder + branch, built once per scan for the search filter.
     let searchKey: String
+    /// Desktop's end-of-turn summary category (`blocked`, `review_ready`, `completed`) and whether it
+    /// describes the latest turn.
+    var summaryCategory: String? = nil
+    var summaryIsCurrent = false
+    var openPRs = 0
+    var finishedPRs = 0
+    /// Derived at scan time from the summary, PRs and how the conversation ends.
+    var status: SessionStatus = .idle
+    var statusReason = ""
 
     /// Has a Desktop-format metadata file (in an account folder or the Stash).
     var isDesktop: Bool { if case .desktop = source { return true } else { return false } }
@@ -102,4 +111,70 @@ struct PendingMove: Hashable {
     let from: String
     let to: String
     let copy: Bool
+}
+
+/// How a conversation's transcript ends, read from its last user/assistant message.
+enum Ending: String, Codable {
+    case answered            // Claude finished its turn
+    case question            // Claude's last message ends with a question
+    case toolPending         // last message is a tool call with no result
+    case toolResultNoReply   // a tool result came back but Claude never continued
+    case userInterrupted     // "[Request interrupted by user]"
+    case unanswered          // your message is last, with no reply
+    case unknown
+}
+
+/// Ranking status, most urgent first (the raw value is the sort rank).
+enum SessionStatus: Int, CaseIterable, Comparable {
+    case running, needsYou, interrupted, inReview, idle, done
+
+    static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
+
+    var label: String {
+        switch self {
+        case .running: return "Running"
+        case .needsYou: return "Needs you"
+        case .interrupted: return "Interrupted"
+        case .inReview: return "In review"
+        case .idle: return "Idle"
+        case .done: return "Done"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .running: return "circle.dotted.circle"
+        case .needsYou: return "hand.raised.fill"
+        case .interrupted: return "pause.circle.fill"
+        case .inReview: return "arrow.triangle.pull"
+        case .idle: return "moon.zzz"
+        case .done: return "checkmark.circle.fill"
+        }
+    }
+
+    /// Decides a session's status. Order matters: live activity first, then an interrupted ending
+    /// (the transcript is ground truth for the latest turn), then Desktop's summary when it
+    /// describes that latest turn, then a trailing question, then PR state.
+    static func classify(_ s: Session, ending: Ending, transcriptAge: TimeInterval?) -> (Self, String) {
+        if let age = transcriptAge, age < 90 { return (.running, "Conversation written \(Int(age))s ago") }
+        switch ending {
+        case .toolPending: return (.interrupted, "Stopped on a tool call that never returned")
+        case .toolResultNoReply: return (.interrupted, "A tool finished but Claude never continued")
+        case .userInterrupted: return (.interrupted, "You interrupted the last turn")
+        case .unanswered: return (.interrupted, "Your last message has no reply")
+        default: break
+        }
+        if s.summaryIsCurrent, let c = s.summaryCategory {
+            switch c {
+            case "blocked": return (.needsYou, s.statusLine ?? "Claude is blocked on you")
+            case "review_ready": return (.inReview, s.statusLine ?? "Ready for review")
+            case "completed": return (.done, s.statusLine ?? "Claude marked this complete")
+            default: break
+            }
+        }
+        if ending == .question { return (.needsYou, "Claude's last message asks you something") }
+        if s.openPRs > 0 { return (.inReview, "\(s.openPRs) open PR\(s.openPRs == 1 ? "" : "s")") }
+        if s.finishedPRs > 0 { return (.done, "All \(s.finishedPRs) PR\(s.finishedPRs == 1 ? "" : "s") merged or closed") }
+        return (.idle, "Finished its turn; nothing pending")
+    }
 }

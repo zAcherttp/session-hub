@@ -25,6 +25,12 @@ final class Store {
     var hiddenNonLocal = 0
     /// Selected card ids (`Session.id`).
     var selection: Set<String> = []
+    /// Latest observed data shape and how it differs from the baseline.
+    private(set) var shape = ShapeProfile()
+    private(set) var drift = ShapeDrift()
+    @ObservationIgnored private var baseline = ShapeStore.loadBaseline()
+    /// Moves are refused while Claude's format differs in ways the app depends on.
+    var writesBlocked: Bool { drift.isBreaking }
     /// Kept current from NSWorkspace launch/quit notifications instead of polled per render.
     private(set) var claudeRunning = false
 
@@ -74,6 +80,12 @@ final class Store {
         if activeAccount != result.activeAccount { activeAccount = result.activeAccount }
         if hiddenNonLocal != result.hiddenNonLocal { hiddenNonLocal = result.hiddenNonLocal }
         desktopCliIds = result.desktopCliIds
+        if result.shape != shape {
+            shape = result.shape
+            let d = ShapeDrift.compare(observed: shape, baseline: baseline)
+            if d != drift { drift = d }
+            ShapeStore.recordIfChanged(drift, observed: shape)
+        }
         let ids = Set(byId.keys)
         if pending.keys.contains(where: { !ids.contains($0) }) { pending = pending.filter { ids.contains($0.key) } }
         if !selection.isSubset(of: ids) { selection.formIntersection(ids) }
@@ -250,6 +262,7 @@ final class Store {
 
     /// Deletes this account's copy of a session that another account also holds. The transcript is untouched.
     func removeCopy(_ s: Session) async {
+        guard !writesBlocked else { message = "Paused: Claude's data format changed (see Data shape)."; return }
         guard let file = s.desktopFile, !sharedWith(s).isEmpty else { return }
         let relaunch = claudeIsRunning && s.columnId.hasPrefix((activeAccount ?? "-") + "/")
         await run([.remove(path: file.path)], relaunch: relaunch, label: "Removed from \(name(for: column(s.columnId)))")
@@ -279,7 +292,24 @@ final class Store {
 
     // MARK: Applying
 
+    /// Accepts the current shape as the new baseline (after checking a Claude update is understood).
+    func acceptShape() {
+        do {
+            try ShapeStore.accept(shape)
+            baseline = shape
+            drift = ShapeDrift.compare(observed: shape, baseline: baseline)
+            ShapeStore.recordIfChanged(drift, observed: shape)
+            message = "Accepted the current data shape as the baseline."
+        } catch { message = "Couldn't save the baseline: \(error.localizedDescription)" }
+    }
+
+    var shapeReport: String { drift.report(observed: shape, baseline: baseline) }
+
     func applyPending() async {
+        guard !writesBlocked else {
+            message = "Moves are paused: Claude's data format changed. Open Data Shape in the toolbar for details."
+            return
+        }
         let ops = pending.values.compactMap { plan($0) }.flatMap { $0 }
         guard !ops.isEmpty else { pending = [:]; return }
         let relaunch = claudeIsRunning && pendingNeedsRelaunchIgnoringState

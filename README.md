@@ -10,6 +10,16 @@ A small macOS app for people who switch between several Claude accounts. It show
   - **Fork here:** `claude --resume <id> --fork-session` in the session's folder.
   - **Fork into a new worktree:** creates `.claude/worktrees/fork-…` from the session's current commit, so both sessions can edit in parallel.
   - **Resume:** continues the same session ID.
+- **Status and ranking.** Each card gets a status, and by default columns sort by status, then by most recent activity (switch with the Sort button):
+  | Status | Meaning |
+  | --- | --- |
+  | Running | The conversation was written in the last 90 seconds |
+  | Needs you | Claude's end-of-turn summary says it's blocked, or its last message asks you a question |
+  | Interrupted | The conversation ends on your interrupt, on a tool call or tool result with no reply, or on your message with no reply |
+  | In review | It has an open PR, or the summary says it's ready for review |
+  | Idle | Claude finished its turn and nothing is pending |
+  | Done | Every PR is merged or closed, or the summary says it's complete. Each column's ⋯ menu has **Stash all Done** |
+- **Data shape tracking.** `Schema/claude-storage-baseline.json` records how Claude stores sessions today: the fields and types in each session file, the record types in conversation files, known status values, the folder layout, and the Claude versions it came from. Every scan compares against it. If a field or folder Session Hub depends on disappears or changes type, moving and stashing pause. New fields or values show as informational changes you can accept as the new baseline. Each time the set of differences changes, a snapshot tagged with the Claude versions is saved in `~/Library/Application Support/SessionHub/schema/snapshots/`. Regenerate the bundled baseline with `SessionHub --schema > Schema/claude-storage-baseline.json`.
 - **Stash.** A pinned column for sessions you want to keep but take out of every account. Stashed session files live in `~/Library/Application Support/SessionHub/stash/`, so no Claude Desktop login lists them. Stashing also backs up the conversation transcript, since Claude Code's cleanup can delete old ones. Drag a stashed session onto an account to restore it.
 - **Bulk select.** Every card has a checkbox. Click a card to select it (it gets a highlighted border), ⌘-click to add or remove cards, and ⇧-click to select a range. Dragging any selected card moves the whole selection, and right-click actions apply to all selected cards.
 - **Archive filter.** Switch between Active, Archived, or All sessions from the toolbar.
