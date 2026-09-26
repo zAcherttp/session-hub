@@ -5,6 +5,8 @@
   <key>CFBundleDisplayName</key><string>Session Hub</string>
   <key>CFBundleIdentifier</key><string>local.phat.sessionhub</string>
   <key>CFBundleExecutable</key><string>SessionHub</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundleIconName</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleVersion</key><string>1</string>

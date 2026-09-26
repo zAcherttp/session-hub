@@ -78,6 +78,8 @@ open ~/Applications/SessionHub.app --args --demo
 
 Demo mode reads nothing from disk, saves nothing, and ignores Apply, Undo and baseline changes. It stages one move and selects two cards so the floating dock shows.
 
+The app icon is an Icon Composer document at `Icon/AppIcon.icon` (layered SVGs plus `icon.json`). Open it in Icon Composer (bundled with Xcode) to edit it; `build.sh` compiles it with `actool` into the Liquid Glass icon (`Assets.car`) and an `.icns` fallback for older macOS.
+
 To make a universal release zip in `dist/`:
 
 ```bash

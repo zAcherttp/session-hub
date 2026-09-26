@@ -16,6 +16,11 @@ stamp_sdk "$APP/Contents/MacOS/SessionHub"
 cp Info.plist "$APP/Contents/Info.plist"
 mkdir -p "$APP/Contents/Resources"
 cp Schema/claude-storage-baseline.json "$APP/Contents/Resources/"
+# Compile the Icon Composer document (Icon/AppIcon.icon) into Assets.car (Liquid Glass) + AppIcon.icns (older macOS).
+ICON_OUT="$(mktemp -d)"
+xcrun actool Icon/AppIcon.icon --compile "$ICON_OUT" --platform macosx --minimum-deployment-target 14.0 \
+  --app-icon AppIcon --output-partial-info-plist "$ICON_OUT/partial.plist" >/dev/null
+cp "$ICON_OUT/Assets.car" "$ICON_OUT/AppIcon.icns" "$APP/Contents/Resources/"
 codesign --force --sign - "$APP"
 mkdir -p ~/Applications
 rm -rf ~/Applications/SessionHub.app
