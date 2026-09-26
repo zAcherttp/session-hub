@@ -58,6 +58,8 @@ struct GlassGroup<Content: View>: View {
 }
 
 enum Metrics {
+    /// Margin between the board and the window edges (and between columns).
+    static let windowPadding: CGFloat = 12
     /// Concentric radii: card radius = column radius − column padding.
     static let columnRadius: CGFloat = 20
     static let columnPadding: CGFloat = 8

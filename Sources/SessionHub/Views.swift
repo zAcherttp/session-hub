@@ -55,33 +55,21 @@ struct BoardView: View {
     @Namespace private var dock
 
     var body: some View {
-        // Columns run up underneath the toolbar; their headers start below it (`topInset`).
-        GeometryReader { geo in
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 14) {
-                    ForEach(store.orderedColumns.filter { !store.prefs.hiddenColumns.contains($0.id) }) { column in
-                        ColumnView(column: column, search: search, archiveFilter: archiveFilter, topInset: geo.safeAreaInsets.top) { sessions in
-                            forkRequest = ForkRequest(sessions: sessions)
-                        } onAction: { group, mode in copyCommands(group, mode) }
-                    }
+        // The board keeps an even margin from every window edge and starts below the toolbar.
+        ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: Metrics.windowPadding) {
+                ForEach(store.orderedColumns.filter { !store.prefs.hiddenColumns.contains($0.id) }) { column in
+                    ColumnView(column: column, search: search, archiveFilter: archiveFilter) { sessions in
+                        forkRequest = ForkRequest(sessions: sessions)
+                    } onAction: { group, mode in copyCommands(group, mode) }
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .frame(minHeight: geo.size.height + geo.safeAreaInsets.top, alignment: .top)
             }
-            .scrollIndicators(.never)
-            .ignoresSafeArea(.container, edges: .top)
+            .padding(Metrics.windowPadding)
         }
+        .scrollIndicators(.never)
         .floatingToolbar()
         // Floating controls over the content: they never push the board around.
         .overlay(alignment: .bottom) { dockView }
-        .overlay(alignment: .bottomLeading) {
-            if store.hiddenNonLocal > 0 {
-                Label("\(store.hiddenNonLocal) from other machines hidden", systemImage: "eye.slash")
-                    .font(.caption).foregroundStyle(.tertiary)
-                    .padding(.leading, 20).padding(.bottom, 10)
-            }
-        }
         .animation(.smooth(duration: 0.3), value: store.pending.count)
         .animation(.smooth(duration: 0.3), value: store.selection.count)
         .animation(.smooth(duration: 0.3), value: store.message)
@@ -119,6 +107,10 @@ struct BoardView: View {
                     Toggle(store.name(for: c), isOn: Binding(
                         get: { !store.prefs.hiddenColumns.contains(c.id) },
                         set: { store.setVisible(c, $0) }))
+                }
+                if store.hiddenNonLocal > 0 {
+                    Divider()
+                    Text("\(store.hiddenNonLocal) session(s) from other machines hidden")
                 }
             } label: { Label("Columns", systemImage: "rectangle.split.3x1") }
             Button { Task { await store.undoLast() } } label: { Label("Undo last change", systemImage: "arrow.uturn.backward") }
@@ -184,7 +176,7 @@ struct BoardView: View {
                 }
             }
         }
-        .padding(.bottom, 16)
+        .padding(.bottom, Metrics.windowPadding + 12)
     }
 
     private func copyCommands(_ sessions: [Session], _ mode: Launcher.Mode) {
@@ -228,7 +220,6 @@ struct ColumnView: View {
     let column: Column
     let search: String
     let archiveFilter: ArchiveFilter
-    var topInset: CGFloat = 0
     let onFork: ([Session]) -> Void
     let onAction: ([Session], Launcher.Mode) -> Void
     @State private var targeted = false
@@ -345,7 +336,7 @@ struct ColumnView: View {
             let hint = store.hint(for: column)
             if !hint.isEmpty { Text(hint).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
         }
-        .padding(.horizontal, 14).padding(.top, 14 + max(0, topInset - 8)).padding(.bottom, 10)
+        .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
     }
 }
 
