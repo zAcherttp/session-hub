@@ -36,13 +36,6 @@ extension View {
         if #available(macOS 15, *) { toolbarBackgroundVisibility(.hidden, for: .windowToolbar) } else { self }
     }
 
-    /// Extends this view's content (mirrored and blurred) underneath the floating sidebar, so the
-    /// sidebar's glass picks up the content's color, as Music does with its artwork.
-    @ViewBuilder
-    func extendsUnderSidebar() -> some View {
-        if #available(macOS 26, *) { backgroundExtensionEffect() } else { self }
-    }
-
     /// Soft fade where scrolling content meets the toolbar.
     @ViewBuilder
     func softScrollEdge() -> some View {

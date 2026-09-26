@@ -103,8 +103,6 @@ struct BoardView: View {
             .padding([.horizontal, .bottom], Metrics.windowPadding)
         }
         .scrollIndicators(.never)
-        // Only the backdrop extends under the sidebar and toolbar; cards are never mirrored.
-        .background { AmbientBackdrop().extendsUnderSidebar() }
         .floatingToolbar()
         // Floating controls over the content: they never push the board around.
         .overlay(alignment: .bottom) { dockView }
@@ -714,10 +712,13 @@ struct StatusChip: View {
         Label(status.label, systemImage: status.symbol)
             .labelStyle(.titleAndIcon)
             .font(.caption2.weight(.medium)).lineLimit(1).fixedSize()
-            .foregroundStyle(.primary.opacity(0.9))
+            .foregroundStyle(.primary.opacity(0.72))
             .padding(.horizontal, 8).padding(.vertical, 2)
             .background {
-                LinearGradient(colors: [status.color.opacity(0.6), status.color.opacity(0)],
+                // A low, soft shade: color only in the bottom half, well under half strength.
+                LinearGradient(stops: [.init(color: status.color.opacity(0.32), location: 0),
+                                       .init(color: status.color.opacity(0.08), location: 0.55),
+                                       .init(color: status.color.opacity(0), location: 1)],
                                startPoint: .bottom, endPoint: .top)
                     .clipShape(Capsule())
             }
@@ -903,29 +904,4 @@ extension SessionStatus {
     }
 }
 
-/// A soft, low-contrast wash of the board's status colors behind the columns. The sidebar and
-/// toolbar glass refract it, the way Music's sidebar picks up album artwork.
-struct AmbientBackdrop: View {
-    @Environment(Store.self) private var store
 
-    /// The most prominent attention states on the board, most urgent first.
-    private var tints: [Color] {
-        let active = store.sessions.filter { !$0.isArchived && !$0.isStashed }
-        let counts = Dictionary(grouping: active, by: \.status).mapValues(\.count)
-        let order: [SessionStatus] = [.needsYou, .interrupted, .running, .inReview]
-        let present = order.filter { (counts[$0] ?? 0) > 0 }.map(\.color)
-        return present.isEmpty ? [.accentColor] : Array(present.prefix(3))
-    }
-
-    var body: some View {
-        let anchors: [UnitPoint] = [.topLeading, .bottomTrailing, .bottomLeading]
-        ZStack {
-            Color(nsColor: .windowBackgroundColor)
-            ForEach(Array(tints.enumerated()), id: \.offset) { i, color in
-                RadialGradient(colors: [color.opacity(0.22), .clear], center: anchors[i], startRadius: 0, endRadius: 700)
-            }
-        }
-        .drawingGroup()
-        .ignoresSafeArea()
-    }
-}
