@@ -10,6 +10,7 @@ A small macOS app for people who switch between several Claude accounts. It show
   - **Fork here:** `claude --resume <id> --fork-session` in the session's folder.
   - **Fork into a new worktree:** creates `.claude/worktrees/fork-…` from the session's current commit, so both sessions can edit in parallel.
   - **Resume:** continues the same session ID.
+- **Archive filter.** Switch between Active, Archived, or All sessions from the toolbar.
 - **This Mac only.** Sessions whose working folder isn't on this machine are hidden. The app refuses to write anything other than `local_*.json` files in Claude's session folders.
 
 ## How Claude Code stores sessions
@@ -44,3 +45,7 @@ This builds `SessionHub.app` and installs it to `~/Applications`. To print what 
 - This is an unofficial tool, not affiliated with Anthropic. Claude's storage format can change without notice.
 - Cloud sessions (claude.ai/code) don't have files on your Mac, so they don't appear.
 - Dragging a CLI session into a Desktop account creates a basic Desktop record for it. This is experimental.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

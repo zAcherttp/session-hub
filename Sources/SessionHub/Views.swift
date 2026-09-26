@@ -48,7 +48,7 @@ struct SessionHubApp: App {
 struct BoardView: View {
     @EnvironmentObject var store: Store
     @State private var search = ""
-    @State private var showArchived = false
+    @AppStorage("archiveFilter") private var archiveFilter: ArchiveFilter = .active
     @State private var forkTarget: Session?
     @State private var confirmApply = false
     @State private var error: String?
@@ -59,7 +59,7 @@ struct BoardView: View {
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(store.orderedColumns.filter { !store.prefs.hiddenColumns.contains($0.id) }) { column in
-                        ColumnView(column: column, search: search, showArchived: showArchived) { outcome in
+                        ColumnView(column: column, search: search, archiveFilter: archiveFilter) { outcome in
                             if case let .forkRequested(s) = outcome { forkTarget = s }
                         } onAction: { s, mode in launch(s, mode) }
                     }
@@ -85,8 +85,11 @@ struct BoardView: View {
         .searchable(text: $search, placement: .toolbar, prompt: "Filter sessions")
         .toolbar {
             ToolbarItemGroup {
-                Toggle(isOn: $showArchived) { Label("Archived", systemImage: "archivebox") }
-                    .help("Show archived Desktop sessions")
+                Picker("Show", selection: $archiveFilter) {
+                    ForEach(ArchiveFilter.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .help("Filter by archived state (CLI sessions are never archived)")
                 Menu {
                     ForEach(store.orderedColumns) { c in
                         Toggle(store.name(for: c), isOn: Binding(
@@ -141,12 +144,31 @@ struct BoardView: View {
     }
 }
 
+enum ArchiveFilter: String, CaseIterable, Identifiable {
+    case active, archived, all
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .active: return "Active"
+        case .archived: return "Archived"
+        case .all: return "All"
+        }
+    }
+    func includes(_ s: Session) -> Bool {
+        switch self {
+        case .active: return !s.isArchived
+        case .archived: return s.isArchived
+        case .all: return true
+        }
+    }
+}
+
 struct ColumnView: View {
     static let dragPrefix = "sessionhub-column:"
     @EnvironmentObject var store: Store
     let column: Column
     let search: String
-    let showArchived: Bool
+    let archiveFilter: ArchiveFilter
     let onDrop: (Store.DropOutcome) -> Void
     let onAction: (Session, Launcher.Mode) -> Void
     @State private var targeted = false
@@ -158,7 +180,7 @@ struct ColumnView: View {
         let q = search.lowercased()
         return store.sessions.filter { s in
             store.displayColumns(for: s).contains(column.id)
-                && (showArchived || !s.isArchived)
+                && archiveFilter.includes(s)
                 && (q.isEmpty || s.title.lowercased().contains(q) || s.cwd.lowercased().contains(q) || (s.branch ?? "").lowercased().contains(q))
         }
     }
