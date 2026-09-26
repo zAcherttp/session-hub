@@ -27,6 +27,16 @@ The app relies on this layout, which I worked out from what's on disk; it isn't 
 
 A session file doesn't record which account owns it, so moving it into another account's folder changes the owner. The transcript and worktree stay where they are.
 
+## Install
+
+Download `SessionHub-<version>.zip` from [Releases](https://github.com/zAcherttp/session-hub/releases), unzip it, and move `SessionHub.app` to Applications. The build is ad-hoc signed rather than notarized, so macOS blocks the first launch. Allow it once with:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/SessionHub.app
+```
+
+It runs on macOS 14 or later, on both Apple Silicon and Intel Macs.
+
 ## Build
 
 You need Xcode. The Command Line Tools alone can't build SwiftUI apps against the macOS 27 SDK.
@@ -39,6 +49,12 @@ This builds `SessionHub.app` and installs it to `~/Applications`. To print what 
 
 ```bash
 ~/Applications/SessionHub.app/Contents/MacOS/SessionHub --dump
+```
+
+To make a universal release zip in `dist/`:
+
+```bash
+./release.sh 1.0.0
 ```
 
 ## Caveats
