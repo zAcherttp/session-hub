@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.3
+
+### Added
+- **Delete from Stash.** Right-click a stashed card and choose Delete from Stash…, or select cards and press ⌘⌫. After you confirm, the session and its conversation are removed. The conversation stays if a Desktop account still holds a copy. Files move into Session Hub's backups folder, so **Undo last change** brings them back.
+
+### Fixed
+- **Moving a `/branch` fork from the CLI to Desktop** used the parent conversation's folder and branch. The session now opens where the fork actually ran.
+- **"This session's branch is checked out in another folder"** appeared when opening a CLI session from a worktree after moving it to Desktop. Session Hub no longer asks Desktop to recreate a worktree that still exists.
+
 ## 1.0.2
 
 ### Added
