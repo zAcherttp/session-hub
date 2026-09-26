@@ -20,7 +20,7 @@ final class Store {
     var pending: [String: PendingMove] = [:] { didSet { rebuildColumnItems() } }
     var isScanning = false
     var isApplying = false
-    var message: String?
+    var message: Toast?
     var lastJournal: URL?
     var hiddenNonLocal = 0
     /// Sidebar selection: all sessions, or only one status across every column.
@@ -120,7 +120,7 @@ final class Store {
     }
 
     private var demoRefusal: Bool {
-        if isDemo { message = "Demo mode: nothing is saved." }
+        if isDemo { message = Toast(.info, "Demo mode: nothing is saved") }
         return isDemo
     }
 
@@ -263,6 +263,13 @@ final class Store {
 
     func clearSelection() { selection = []; selectionAnchor = nil }
 
+    /// Stages every selected card that isn't already stashed for a move into the Stash.
+    func stashSelection() {
+        let stash = column("stash")
+        for id in selection where !(byId[id]?.isStashed ?? true) { _ = drop(cardId: id, on: stash, copy: false) }
+        clearSelection()
+    }
+
     /// What an action on `s` applies to: the whole selection if `s` is part of it, otherwise just `s`.
     func group(for s: Session) -> [Session] {
         guard selection.contains(s.id) else { return [s] }
@@ -294,7 +301,7 @@ final class Store {
     /// Deletes this account's copy of a session that another account also holds. The transcript is untouched.
     func removeCopy(_ s: Session) async {
         if demoRefusal { return }
-        guard !writesBlocked else { message = "Paused: Claude's data format changed (see Data shape)."; return }
+        guard !writesBlocked else { message = Toast(.error, "Changes are paused", "Claude's data format changed. See Data shape in the toolbar."); return }
         guard let file = s.desktopFile, !sharedWith(s).isEmpty else { return }
         let relaunch = claudeIsRunning && s.columnId.hasPrefix((activeAccount ?? "-") + "/")
         await run([.remove(path: file.path)], relaunch: relaunch, label: "Removed from \(name(for: column(s.columnId)))")
@@ -332,8 +339,8 @@ final class Store {
             baseline = shape
             drift = ShapeDrift.compare(observed: shape, baseline: baseline)
             ShapeStore.recordIfChanged(drift, observed: shape)
-            message = "Accepted the current data shape as the baseline."
-        } catch { message = "Couldn't save the baseline: \(error.localizedDescription)" }
+            message = Toast(.success, "Accepted the current data shape as the baseline")
+        } catch { message = Toast(.error, "Couldn't save the baseline", Self.describe(error)) }
     }
 
     var shapeReport: String { drift.report(observed: shape, baseline: baseline) }
@@ -341,14 +348,18 @@ final class Store {
     func applyPending() async {
         if demoRefusal { return }
         guard !writesBlocked else {
-            message = "Moves are paused: Claude's data format changed. Open Data Shape in the toolbar for details."
+            message = Toast(.error, "Changes are paused", "Claude's data format changed. See Data shape in the toolbar.")
             return
         }
         let ops = pending.values.compactMap { plan($0) }.flatMap { $0 }
         guard !ops.isEmpty else { pending = [:]; return }
         let relaunch = claudeIsRunning && pendingNeedsRelaunchIgnoringState
-        await run(ops, relaunch: relaunch, label: "Applied \(pending.count) change(s)")
-        pending = [:]
+        let n = pending.count
+        let noun = n == 1 ? "1 change" : "\(n) changes"
+        // Staged changes survive a failure so they can be retried.
+        if await run(ops, relaunch: relaunch, label: "Applied \(noun)", failure: "Couldn't apply \(noun)") {
+            pending = [:]
+        }
     }
 
     func undoLast() async {
@@ -364,7 +375,7 @@ final class Store {
             }
             return paths.contains { $0.contains("/\(activeAccount ?? "-")/") }
         }
-        await run(undo, relaunch: claudeIsRunning && touchesActive, label: "Undid last change", journal: false)
+        await run(undo, relaunch: claudeIsRunning && touchesActive, label: "Undid the last change", failure: "Couldn't undo the last change", journal: false)
         try? FileManager.default.moveItem(at: journal, to: journal.appendingPathExtension("undone"))
         lastJournal = Self.latestJournal()
     }
@@ -425,20 +436,44 @@ final class Store {
         return [.create(path: target.appendingPathComponent(id + ".json").path, data: data)]
     }
 
-    private func run(_ ops: [FileOp], relaunch: Bool, label: String, journal: Bool = true) async {
+    @discardableResult
+    private func run(_ ops: [FileOp], relaunch: Bool, label: String, failure: String? = nil, journal: Bool = true) async -> Bool {
         isApplying = true
         defer { isApplying = false }
+        var ok = true
         do {
             if relaunch { try await quitClaude() }
             let undo = try execute(ops)
             if journal { lastJournal = try writeJournal(ops: ops, undo: undo) }
             if relaunch { relaunchClaude() }
-            message = label + (relaunch ? " — relaunched Claude." : ".")
+            message = Toast(.success, label, relaunch ? "Claude was relaunched." : nil)
         } catch {
-            message = "Failed: \(error.localizedDescription)"
+            ok = false
+            message = Toast(.error, failure ?? "Something went wrong",
+                            Self.describe(error) + " Nothing was changed.")
             if relaunch { relaunchClaude() }
         }
         await refresh()
+        return ok
+    }
+
+    /// A short, human explanation for file errors instead of raw paths.
+    static func describe(_ error: Error) -> String {
+        let e = error as NSError
+        guard e.domain == NSCocoaErrorDomain else { return e.localizedDescription }
+        let name = (e.userInfo[NSFilePathErrorKey] as? String).map { ($0 as NSString).lastPathComponent }
+        switch e.code {
+        case NSFileNoSuchFileError, NSFileReadNoSuchFileError:
+            return name.map { "A file or folder it needed was missing (\($0))." } ?? "A file or folder it needed was missing."
+        case NSFileWriteNoPermissionError, NSFileReadNoPermissionError:
+            return "Session Hub isn't allowed to change that file."
+        case NSFileWriteFileExistsError:
+            return "A session with the same ID is already there."
+        case NSFileWriteOutOfSpaceError:
+            return "The disk is full."
+        default:
+            return e.localizedFailureReason ?? e.localizedDescription
+        }
     }
 
     /// Executes ops, returning the inverse ops (in reverse order). Rolls back on failure.
@@ -493,7 +528,8 @@ final class Store {
                     try fm.copyItem(atPath: from, toPath: to)
                     undo.insert(.remove(path: to), at: 0)
                 case let .create(path, data):
-                    guard !fm.fileExists(atPath: path) else { throw err("File exists: \(path)") }
+                    guard !fm.fileExists(atPath: path) else { throw err("A session with the same ID is already there.") }
+                    try fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
                     try data.write(to: URL(fileURLWithPath: path), options: .withoutOverwriting)
                     undo.insert(.remove(path: path), at: 0)
                 case let .remove(path):
@@ -578,4 +614,18 @@ final class Store {
     }
 
     private func err(_ s: String) -> NSError { NSError(domain: "SessionHub", code: 1, userInfo: [NSLocalizedDescriptionKey: s]) }
+}
+
+/// A short message in the floating dock.
+struct Toast: Equatable {
+    enum Kind { case success, info, error }
+    let kind: Kind
+    let title: String
+    let detail: String?
+
+    init(_ kind: Kind, _ title: String, _ detail: String? = nil) {
+        self.kind = kind
+        self.title = title
+        self.detail = detail
+    }
 }

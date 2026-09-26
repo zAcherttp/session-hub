@@ -203,7 +203,11 @@ struct ShapeDrift: Equatable {
                     items.append(Item(severity: .info, text: "Field no longer seen: \(kind).\(key)"))
                 }
             }
-            for (key, f) in rec.fields.sorted(by: { $0.key < $1.key }) {
+            // Type changes only matter for Desktop session files and fields the app reads;
+            // transcript payloads (tool results etc.) vary by tool and would just be noise.
+            let required = Set(requirements.filter { $0.kind == kind }.map(\.field))
+            for (key, f) in rec.fields.sorted(by: { $0.key < $1.key })
+            where kind.hasPrefix("desktopSession") || required.contains(key) {
                 guard let b = base.fields[key] else { continue }
                 let added = f.types.subtracting(b.types).subtracting(["null"])
                 if !added.isEmpty {

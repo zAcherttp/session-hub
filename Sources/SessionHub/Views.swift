@@ -65,6 +65,16 @@ struct SessionHubApp: App {
             CommandGroup(after: .newItem) {
                 Button("Refresh") { Task { await store.refresh() } }.keyboardShortcut("r")
             }
+            CommandMenu("Sessions") {
+                Button("Move Selection to Stash") { store.stashSelection() }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                    .disabled(store.selection.isEmpty)
+                Button("Clear Selection") { store.clearSelection() }
+                    .disabled(store.selection.isEmpty)
+                Divider()
+                Button("Discard Pending Changes") { store.discardPending() }
+                    .disabled(store.pending.isEmpty)
+            }
         }
     }
 }
@@ -107,7 +117,8 @@ struct BoardView: View {
         // Floating controls over the content: they never push the board around.
         .overlay(alignment: .bottom) { dockView }
         .task(id: store.message) {
-            guard store.message != nil else { return }
+            // Errors stay until dismissed; everything else fades after a few seconds.
+            guard let m = store.message, m.kind != .error else { return }
             try? await Task.sleep(nanoseconds: 6_000_000_000)
             store.message = nil
         }
@@ -218,17 +229,9 @@ struct BoardView: View {
                     .glassPanel(in: Capsule())
                     .glassID("selection", in: dock)
                 }
-                if let msg = store.message {
-                    HStack(spacing: 10) {
-                        Text(msg).font(.callout).lineLimit(2)
-                        Button { store.message = nil } label: { Image(systemName: "xmark") }
-                            .glassButton()
-                            .buttonBorderShape(.circle)
-                    }
-                    .padding(.leading, 16).padding(.trailing, Metrics.dockInset).padding(.vertical, Metrics.dockInset)
-                    .frame(maxWidth: 520)
-                    .glassPanel(in: Capsule())
-                    .glassID("message", in: dock)
+                if let toast = store.message {
+                    ToastView(toast: toast) { store.message = nil }
+                        .glassID("message", in: dock)
                 }
             }
         }
@@ -246,7 +249,7 @@ struct BoardView: View {
 
     private func announceCopy(_ sessions: [Session], _ mode: Launcher.Mode) {
         let what = sessions.count == 1 ? "“\(sessions[0].title)”" : "\(sessions.count) sessions"
-        store.message = "Copied \(mode.label.lowercased()) command for \(what). Paste it into a terminal."
+        store.message = Toast(.success, "Copied \(mode.label.lowercased()) command", "For \(what). Paste it into a terminal.")
     }
 }
 
@@ -990,5 +993,45 @@ struct OverflowBadge: View {
             }
             .padding(12)
         }
+    }
+}
+
+/// Icon, bold title and an optional wrapped detail line. One-line toasts are capsules; toasts with
+/// detail become a rounded panel whose corner is concentric with the inset close button.
+struct ToastView: View {
+    let toast: Toast
+    let onClose: () -> Void
+
+    private var icon: (String, Color) {
+        switch toast.kind {
+        case .success: return ("checkmark.circle.fill", .green)
+        case .info: return ("info.circle.fill", .blue)
+        case .error: return ("exclamationmark.octagon.fill", .red)
+        }
+    }
+
+    var body: some View {
+        let hasDetail = toast.detail != nil
+        HStack(alignment: hasDetail ? .top : .center, spacing: 10) {
+            Image(systemName: icon.0).foregroundStyle(icon.1).font(.body)
+                .padding(.top, hasDetail ? 3 : 0)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(toast.title).font(.callout.weight(.semibold))
+                if let d = toast.detail {
+                    Text(d).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.vertical, hasDetail ? 4 : 0)
+            Spacer(minLength: 4)
+            Button(action: onClose) { Image(systemName: "xmark") }
+                .glassButton()
+                .buttonBorderShape(.circle)
+                .help("Dismiss")
+        }
+        .padding(.leading, 14).padding(.trailing, Metrics.dockInset).padding(.vertical, Metrics.dockInset)
+        .frame(maxWidth: 440)
+        .fixedSize(horizontal: false, vertical: true)
+        .glassPanel(in: RoundedRectangle(cornerRadius: hasDetail ? 20 : 100, style: .continuous))
     }
 }
