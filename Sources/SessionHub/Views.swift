@@ -52,60 +52,40 @@ struct BoardView: View {
     @State private var forkRequest: ForkRequest?
     @State private var confirmApply = false
 
+    @Namespace private var dock
+
     var body: some View {
-        VStack(spacing: 0) {
-            if !store.pending.isEmpty { pendingBar }
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 12) {
-                    ForEach(store.orderedColumns.filter { !store.prefs.hiddenColumns.contains($0.id) }) { column in
-                        ColumnView(column: column, search: search, archiveFilter: archiveFilter) { sessions in
-                            forkRequest = ForkRequest(sessions: sessions)
-                        } onAction: { group, mode in copyCommands(group, mode) }
-                    }
+        ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: 14) {
+                ForEach(store.orderedColumns.filter { !store.prefs.hiddenColumns.contains($0.id) }) { column in
+                    ColumnView(column: column, search: search, archiveFilter: archiveFilter) { sessions in
+                        forkRequest = ForkRequest(sessions: sessions)
+                    } onAction: { group, mode in copyCommands(group, mode) }
                 }
-                .padding(12)
             }
-            // Bottom placement so selecting a card never shifts the board under the cursor.
-            if !store.selection.isEmpty { selectionBar }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+        }
+        .scrollIndicators(.never)
+        // Floating controls over the content: they never push the board around.
+        .overlay(alignment: .bottom) { dockView }
+        .overlay(alignment: .bottomLeading) {
             if store.hiddenNonLocal > 0 {
-                Text("\(store.hiddenNonLocal) session(s) from other machines/users hidden")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 12).padding(.bottom, 4)
+                Label("\(store.hiddenNonLocal) from other machines hidden", systemImage: "eye.slash")
+                    .font(.caption).foregroundStyle(.tertiary)
+                    .padding(.leading, 20).padding(.bottom, 10)
             }
-            if let msg = store.message {
-                HStack {
-                    Text(msg).font(.callout)
-                    Spacer()
-                    Button("Dismiss") { store.message = nil }.buttonStyle(.link)
-                }
-                .padding(.horizontal, 12).padding(.vertical, 6)
-                .background(.bar)
-            }
+        }
+        .animation(.smooth(duration: 0.3), value: store.pending.count)
+        .animation(.smooth(duration: 0.3), value: store.selection.count)
+        .animation(.smooth(duration: 0.3), value: store.message)
+        .task(id: store.message) {
+            guard store.message != nil else { return }
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            store.message = nil
         }
         .searchable(text: $search, placement: .toolbar, prompt: "Filter sessions")
-        .toolbar {
-            ToolbarItemGroup {
-                Picker("Show", selection: $archiveFilter) {
-                    ForEach(ArchiveFilter.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .help("Filter by archived state (CLI sessions are never archived)")
-                Menu {
-                    ForEach(store.orderedColumns) { c in
-                        Toggle(store.name(for: c), isOn: Binding(
-                            get: { !store.prefs.hiddenColumns.contains(c.id) },
-                            set: { store.setVisible(c, $0) }))
-                    }
-                } label: { Label("Columns", systemImage: "rectangle.split.3x1") }
-                Button { Task { await store.undoLast() } } label: { Label("Undo last change", systemImage: "arrow.uturn.backward") }
-                    .disabled(store.lastJournal == nil || store.isApplying)
-                    .help("Revert the last applied batch of moves")
-                Button { Task { await store.refresh() } } label: {
-                    if store.isScanning { ProgressView().controlSize(.small) } else { Label("Refresh", systemImage: "arrow.clockwise") }
-                }
-            }
-        }
+        .toolbar { toolbarContent }
         .sheet(item: $forkRequest) { req in
             CommandSheet(sessions: req.sessions) { mode in announceCopy(req.sessions, mode); forkRequest = nil }
         }
@@ -119,37 +99,86 @@ struct BoardView: View {
         }
     }
 
-    private var applyTitle: String { "Apply \(store.pending.count) change(s)?" }
-
-    private var pendingBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.left.arrow.right.circle.fill").foregroundStyle(.orange)
-            Text("\(store.pending.count) pending change(s)").fontWeight(.medium)
-            if store.pendingNeedsRelaunch {
-                Text("Claude Desktop will quit and reopen").font(.callout).foregroundStyle(.secondary)
+    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        ToolbarItem {
+            Picker("Show", selection: $archiveFilter) {
+                ForEach(ArchiveFilter.allCases) { Text($0.title).tag($0) }
             }
-            Spacer()
-            Button("Discard") { store.discardPending() }
-            Button("Apply") { confirmApply = true }
-                .keyboardShortcut(.return, modifiers: .command)
-                .buttonStyle(.borderedProminent)
-                .disabled(store.isApplying)
+            .pickerStyle(.segmented)
+            .help("Filter by archived state (CLI sessions are never archived)")
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(Color.orange.opacity(0.12))
+        ToolbarItemGroup {
+            Menu {
+                ForEach(store.orderedColumns) { c in
+                    Toggle(store.name(for: c), isOn: Binding(
+                        get: { !store.prefs.hiddenColumns.contains(c.id) },
+                        set: { store.setVisible(c, $0) }))
+                }
+            } label: { Label("Columns", systemImage: "rectangle.split.3x1") }
+            Button { Task { await store.undoLast() } } label: { Label("Undo last change", systemImage: "arrow.uturn.backward") }
+                .disabled(store.lastJournal == nil || store.isApplying)
+                .help("Revert the last applied batch of changes")
+            Button { Task { await store.refresh() } } label: {
+                if store.isScanning { ProgressView().controlSize(.small) } else { Label("Refresh", systemImage: "arrow.clockwise") }
+            }
+            .help("Rescan sessions")
+        }
     }
 
-    private var selectionBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
-            Text("\(store.selection.count) selected").fontWeight(.medium)
-            Text("Drag any selected card to move them together · ⌘-click toggles · ⇧-click selects a range")
-                .font(.callout).foregroundStyle(.secondary).lineLimit(1)
-            Spacer()
-            Button("Clear") { store.clearSelection() }.keyboardShortcut(.escape, modifiers: [])
+    private var applyTitle: String { "Apply \(store.pending.count) change(s)?" }
+
+    /// Pending changes, selection and messages as glass capsules that morph in and out together.
+    private var dockView: some View {
+        GlassGroup(spacing: 12) {
+            HStack(spacing: 12) {
+                if !store.pending.isEmpty {
+                    HStack(spacing: 10) {
+                        Image(systemName: "arrow.left.arrow.right").foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text("\(store.pending.count) pending change(s)").fontWeight(.semibold)
+                            if store.pendingNeedsRelaunch {
+                                Text("Claude will quit and reopen").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Button("Discard") { store.discardPending() }.glassButton()
+                        Button("Apply") { confirmApply = true }
+                            .glassButton(prominent: true)
+                            .tint(.orange)
+                            .keyboardShortcut(.return, modifiers: .command)
+                            .disabled(store.isApplying)
+                    }
+                    .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+                    .glassPanel(in: Capsule())
+                    .glassID("pending", in: dock)
+                }
+                if !store.selection.isEmpty {
+                    HStack(spacing: 10) {
+                        Image(systemName: "checkmark.circle.fill").foregroundStyle(.tint)
+                        Text("\(store.selection.count) selected").fontWeight(.semibold)
+                            .help("Drag any selected card to move them together · ⌘-click toggles · ⇧-click selects a range")
+                        Button("Clear") { store.clearSelection() }
+                            .glassButton()
+                            .keyboardShortcut(.escape, modifiers: [])
+                    }
+                    .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+                    .glassPanel(in: Capsule())
+                    .glassID("selection", in: dock)
+                }
+                if let msg = store.message {
+                    HStack(spacing: 10) {
+                        Text(msg).font(.callout).lineLimit(2)
+                        Button { store.message = nil } label: { Image(systemName: "xmark") }
+                            .glassButton()
+                            .buttonBorderShape(.circle)
+                    }
+                    .padding(.leading, 16).padding(.trailing, 8).padding(.vertical, 8)
+                    .frame(maxWidth: 520)
+                    .glassPanel(in: Capsule())
+                    .glassID("message", in: dock)
+                }
+            }
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(Color.accentColor.opacity(0.10))
+        .padding(.bottom, 16)
     }
 
     private func copyCommands(_ sessions: [Session], _ mode: Launcher.Mode) {
@@ -215,12 +244,11 @@ struct ColumnView: View {
             header(count: list.count)
                 .contentShape(Rectangle())
                 .draggable(ColumnView.dragPrefix + column.id) {
-                    Text(store.name(for: column)).font(.headline).padding(8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.25)))
+                    Text(store.name(for: column)).font(.headline).padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(.tint.opacity(0.25), in: Capsule())
                 }
-            Divider()
             ScrollView {
-                LazyVStack(spacing: 8) {
+                LazyVStack(spacing: 6) {
                     ForEach(list.prefix(limit)) { s in
                         SessionCard(session: s, onSelect: { store.click(s, in: list) }, onAction: onAction)
                             .draggable(store.dragPayload(for: s)) { DragPreview(session: s, count: store.group(for: s).count) }
@@ -233,12 +261,23 @@ struct ColumnView: View {
                             .font(.callout).foregroundStyle(.tertiary).frame(maxWidth: .infinity).padding(.vertical, 40)
                     }
                 }
-                .padding(8)
+                .padding(.horizontal, Metrics.columnPadding)
+                .padding(.bottom, Metrics.dockClearance)
             }
+            .scrollIndicators(.automatic)
+            .softScrollEdge()
         }
         .frame(width: 320)
-        .background(RoundedRectangle(cornerRadius: 10).fill(targeted ? Color.accentColor.opacity(0.12) : Color(nsColor: .controlBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(targeted ? Color.accentColor : Color.secondary.opacity(0.2), lineWidth: targeted ? 2 : 1))
+        // Content layer: an opaque, softly tinted well — no glass here (glass stays on controls).
+        .background(
+            RoundedRectangle(cornerRadius: Metrics.columnRadius, style: .continuous)
+                .fill(targeted ? AnyShapeStyle(.tint.opacity(0.14)) : AnyShapeStyle(Color.primary.opacity(0.045)))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: Metrics.columnRadius, style: .continuous)
+                .strokeBorder(targeted ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(0.07)), lineWidth: targeted ? 2 : 1)
+        )
+        .animation(.smooth(duration: 0.2), value: targeted)
         .dropDestination(for: String.self) { ids, _ in
             // Column header dropped here → reorder columns.
             if let c = ids.first(where: { $0.hasPrefix(ColumnView.dragPrefix) }) {
@@ -269,8 +308,8 @@ struct ColumnView: View {
                         .onTapGesture(count: 2) { draft = store.name(for: column); editing = true }
                 }
                 if column.accountUuid != nil && column.accountUuid == store.activeAccount {
-                    Text("SIGNED IN").font(.caption2.bold()).padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Capsule().fill(Color.green.opacity(0.2))).foregroundStyle(.green)
+                    Text("Signed in").font(.caption2.weight(.semibold)).padding(.horizontal, 7).padding(.vertical, 2)
+                        .background(.green.opacity(0.18), in: Capsule()).foregroundStyle(.green)
                         .help("Claude Desktop's last signed-in account")
                 }
                 Spacer()
@@ -299,7 +338,7 @@ struct ColumnView: View {
             let hint = store.hint(for: column)
             if !hint.isEmpty { Text(hint).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
         }
-        .padding(10)
+        .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 10)
     }
 }
 
@@ -307,6 +346,7 @@ struct SessionCard: View {
     @EnvironmentObject var store: Store
     let session: Session
     var onSelect: () -> Void = {}
+    @State private var hovering = false
     let onAction: ([Session], Launcher.Mode) -> Void
 
     var body: some View {
@@ -352,14 +392,22 @@ struct SessionCard: View {
                 Text(s.lastActivity, style: .relative).font(.caption2).foregroundStyle(.tertiary)
             }
         }
-        .padding(9)
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.accentColor.opacity(0.12) : Color(nsColor: .windowBackgroundColor)))
-        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(
-            selected ? Color.accentColor : move != nil ? Color.orange : Color.secondary.opacity(0.15),
+        .background {
+            let shape = RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
+            shape.fill(Color(nsColor: .controlBackgroundColor))
+                .overlay(shape.fill(selected ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(.clear)))
+                .shadow(color: .black.opacity(hovering ? 0.18 : 0.08), radius: hovering ? 6 : 2, y: hovering ? 3 : 1)
+        }
+        .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous).strokeBorder(
+            selected ? AnyShapeStyle(.tint) : move != nil ? AnyShapeStyle(Color.orange) : AnyShapeStyle(Color.primary.opacity(0.06)),
             lineWidth: selected ? 2 : move != nil ? 1.5 : 1))
         .opacity(s.isArchived && !selected ? 0.6 : 1)
-        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .animation(.smooth(duration: 0.15), value: hovering)
+        .animation(.smooth(duration: 0.15), value: selected)
+        .contentShape(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
         .onTapGesture { onSelect() }
         .contextMenu { menu(s) }
         .help(s.cwd)
@@ -399,7 +447,7 @@ struct SessionCard: View {
     private func tag(_ text: String, color: Color) -> some View {
         Text(text).font(.caption2.weight(.medium)).lineLimit(1)
             .padding(.horizontal, 5).padding(.vertical, 1)
-            .background(Capsule().fill(color.opacity(0.15))).foregroundStyle(color)
+            .background(color.opacity(0.15), in: Capsule()).foregroundStyle(color)
     }
 }
 
@@ -410,18 +458,19 @@ struct DragPreview: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             if count > 1 {
-                RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor))
+                RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous).fill(Color(nsColor: .controlBackgroundColor))
                     .frame(width: 280, height: 44).offset(x: 6, y: 6)
-                    .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.3)).offset(x: 6, y: 6))
+                    .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous).strokeBorder(Color.secondary.opacity(0.3)).offset(x: 6, y: 6))
             }
             Text(session.title).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 .padding(12).frame(width: 280, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .windowBackgroundColor)))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 2))
+                .background(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
+                .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous).strokeBorder(.tint, lineWidth: 2))
+                .shadow(color: .black.opacity(0.25), radius: 10, y: 5)
             if count > 1 {
                 Text("\(count)").font(.caption.bold()).foregroundStyle(.white)
                     .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(Capsule().fill(Color.accentColor)).offset(x: 8, y: -8)
+                    .background(.tint, in: Capsule()).offset(x: 8, y: -8)
             }
         }
         .padding(10)
@@ -460,7 +509,7 @@ struct CommandSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).glassButton()
             }
         }
         .padding(20)
@@ -477,19 +526,20 @@ struct CommandSheet: View {
             HStack {
                 Text(mode.label).fontWeight(.semibold)
                 Spacer()
-                Button("Copy command") {
+                Button {
                     Launcher.copy(commands[mode] ?? Launcher.commands(for: sessions, mode: mode))
                     onCopied(mode)
-                }
+                } label: { Label("Copy", systemImage: "doc.on.doc") }
+                .glassButton(prominent: mode == .fork)
             }
             Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text(commands[mode] ?? "")
                 .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
                 .lineLimit(8).textSelection(.enabled)
                 .padding(6).frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.15)))
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+        .padding(12)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 }

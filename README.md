@@ -12,6 +12,7 @@ A small macOS app for people who switch between several Claude accounts. It show
   - **Resume:** continues the same session ID.
 - **Bulk select.** Every card has a checkbox. Click a card to select it (it gets a highlighted border), ⌘-click to add or remove cards, and ⇧-click to select a range. Dragging any selected card moves the whole selection, and right-click actions apply to all selected cards.
 - **Archive filter.** Switch between Active, Archived, or All sessions from the toolbar.
+- **Liquid Glass design.** On macOS 26 and later, the toolbar and a floating dock (pending changes, selection, messages) use Liquid Glass, while columns and cards stay solid, following Apple's rule that glass belongs to controls rather than content. Earlier macOS versions fall back to standard materials.
 - **This Mac only.** Sessions whose working folder isn't on this machine are hidden. The app refuses to write anything other than `local_*.json` files in Claude's session folders.
 
 ## How Claude Code stores sessions
