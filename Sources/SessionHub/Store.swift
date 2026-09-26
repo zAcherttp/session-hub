@@ -22,6 +22,8 @@ final class Store {
     var isApplying = false
     var message: Toast?
     var lastJournal: URL?
+    /// Stashed cards waiting for the user to confirm they should be deleted.
+    var deleteRequest: [Session] = []
     var hiddenNonLocal = 0
     /// Sidebar selection: all sessions, or only one status across every column.
     var sidebarFilter: SidebarFilter? = .all
@@ -276,6 +278,8 @@ final class Store {
         return selection.compactMap { byId[$0] }.sorted { $0.lastActivity > $1.lastActivity }
     }
 
+    var selectedSessions: [Session] { selection.compactMap { byId[$0] } }
+
     /// Drag payload: newline-separated card ids.
     func dragPayload(for s: Session) -> String { group(for: s).map(\.id).joined(separator: "\n") }
 
@@ -305,6 +309,41 @@ final class Store {
         guard let file = s.desktopFile, !sharedWith(s).isEmpty else { return }
         let relaunch = claudeIsRunning && s.columnId.hasPrefix((activeAccount ?? "-") + "/")
         await run([.remove(path: file.path)], relaunch: relaunch, label: "Removed from \(name(for: column(s.columnId)))")
+    }
+
+    /// Asks for confirmation before deleting the stashed cards in `group`.
+    func requestDeleteFromStash(_ group: [Session]) {
+        deleteRequest = group.filter(\.isStashed)
+    }
+
+    /// Deletes stashed sessions: the Stash record, its transcript backup, and the conversation itself
+    /// unless a Desktop account still uses it. Files go into this change's backup folder, so Undo restores them.
+    func deleteFromStash(_ group: [Session]) async {
+        if demoRefusal { return }
+        guard !writesBlocked else { message = Toast(.error, "Changes are paused", "Claude's data format changed. See Data shape in the toolbar."); return }
+        let targets = group.filter(\.isStashed)
+        guard !targets.isEmpty else { return }
+        let fm = FileManager.default
+        let trash = Paths.backups.appendingPathComponent(Self.stamp()).appendingPathComponent("deleted")
+        let deleting = Set(targets.map(\.id))
+        var ops: [FileOp] = [], seen = Set<String>()
+        func discard(_ u: URL, as rel: String) {
+            guard fm.fileExists(atPath: u.path), seen.insert(u.path).inserted else { return }
+            ops.append(.move(from: u.path, to: trash.appendingPathComponent(rel).path))
+        }
+        for s in targets {
+            guard let file = s.desktopFile else { continue }
+            discard(file, as: "stash/" + file.lastPathComponent)
+            let name = s.cliSessionId + ".jsonl"
+            discard(Paths.stashTranscripts.appendingPathComponent(name), as: "stash/transcripts/" + name)
+            let inUse = sessions.contains { $0.isDesktop && $0.cliSessionId == s.cliSessionId && !deleting.contains($0.id) }
+            if !inUse { discard(s.transcriptURL, as: "projects/" + Paths.projectSlug(for: s.cwd) + "/" + name) }
+        }
+        let noun = targets.count == 1 ? "1 session" : "\(targets.count) sessions"
+        if await run(ops, relaunch: false, label: "Deleted \(noun) from the Stash", failure: "Couldn't delete \(noun)") {
+            for id in deleting { pending[id] = nil }
+            selection.subtract(deleting)
+        }
     }
 
     func column(_ id: String) -> Column { columns.first { $0.id == id } ?? Column(kind: .cli) }
@@ -484,6 +523,7 @@ final class Store {
         // Safety net: session metadata (local_*.json) only inside account folders or the Stash;
         // transcripts (*.jsonl) only copied between ~/.claude/projects and the Stash backup, and a
         // transcript is only ever removed from ~/.claude/projects when a Stash backup of it exists.
+        // Deleting moves metadata or transcripts into Session Hub's backups folder, and Undo moves them back.
         func isMetadata(_ u: URL) -> Bool {
             u.lastPathComponent.hasPrefix("local_") && u.pathExtension == "json"
                 && (u.path.hasPrefix(Paths.desktopSessions.standardizedFileURL.path + "/")
@@ -494,6 +534,10 @@ final class Store {
                 && (u.path.hasPrefix(Paths.cliProjects.standardizedFileURL.path + "/")
                     || u.deletingLastPathComponent().path == Paths.stashTranscripts.standardizedFileURL.path)
         }
+        func isTrash(_ u: URL) -> Bool {
+            (u.pathExtension == "json" || u.pathExtension == "jsonl")
+                && u.path.hasPrefix(Paths.backups.standardizedFileURL.path + "/")
+        }
         func hasBackup(_ u: URL) -> Bool {
             fm.fileExists(atPath: Paths.stashTranscripts.appendingPathComponent(u.lastPathComponent).path)
         }
@@ -501,7 +545,10 @@ final class Store {
             let ok: Bool
             switch op {
             case let .move(a, b):
-                ok = isMetadata(URL(fileURLWithPath: a).standardizedFileURL) && isMetadata(URL(fileURLWithPath: b).standardizedFileURL)
+                let (ua, ub) = (URL(fileURLWithPath: a).standardizedFileURL, URL(fileURLWithPath: b).standardizedFileURL)
+                ok = (isMetadata(ua) && isMetadata(ub))
+                    || ((isMetadata(ua) || isTranscript(ua)) && isTrash(ub))
+                    || (isTrash(ua) && (isMetadata(ub) || isTranscript(ub)))
             case let .copy(a, b):
                 let (ua, ub) = (URL(fileURLWithPath: a).standardizedFileURL, URL(fileURLWithPath: b).standardizedFileURL)
                 ok = (isMetadata(ua) && isMetadata(ub)) || (isTranscript(ua) && isTranscript(ub))
@@ -520,7 +567,9 @@ final class Store {
                 switch op {
                 case let .move(from, to):
                     guard !fm.fileExists(atPath: to) else { throw err("A session with this ID already exists in the target account.") }
-                    try backup(from)
+                    // Moves into or out of the backups folder (delete, undo of a delete) need no extra copy.
+                    let inBackups = Paths.backups.path + "/"
+                    if !to.hasPrefix(inBackups), !from.hasPrefix(inBackups) { try backup(from) }
                     try fm.createDirectory(atPath: (to as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
                     try fm.moveItem(atPath: from, toPath: to)
                     undo.insert(.move(from: to, to: from), at: 0)

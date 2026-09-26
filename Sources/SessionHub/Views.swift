@@ -69,6 +69,9 @@ struct SessionHubApp: App {
                 Button("Move Selection to Stash") { store.stashSelection() }
                     .keyboardShortcut("s", modifiers: [.command, .shift])
                     .disabled(store.selection.isEmpty)
+                Button("Delete Selection from Stash…") { store.requestDeleteFromStash(store.selectedSessions) }
+                    .keyboardShortcut(.delete, modifiers: .command)
+                    .disabled(!store.selectedSessions.contains(where: \.isStashed))
                 Button("Clear Selection") { store.clearSelection() }
                     .disabled(store.selection.isEmpty)
                 Divider()
@@ -136,6 +139,19 @@ struct BoardView: View {
                  ? "These changes touch the account Claude Desktop is signed into. Claude will quit (stopping any running sessions), the files will be updated, and Claude will reopen. A backup is kept and you can undo."
                  : "Session files will be moved or copied between account folders. A backup is kept and you can undo.")
         }
+        .confirmationDialog(deleteTitle, isPresented: Binding(get: { !store.deleteRequest.isEmpty },
+                                                              set: { if !$0 { store.deleteRequest = [] } }),
+                            titleVisibility: .visible, presenting: store.deleteRequest) { group in
+            Button("Delete", role: .destructive) { Task { await store.deleteFromStash(group) } }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("The conversation goes too, unless a Desktop account still has a copy. Files are moved to Session Hub's backups folder, and Undo last change brings them back.")
+        }
+    }
+
+    private var deleteTitle: String {
+        let n = store.deleteRequest.count
+        return n == 1 ? "Delete \u{201C}\(store.deleteRequest[0].title.prefix(60))\u{201D} from the Stash?" : "Delete \(n) sessions from the Stash?"
     }
 
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
@@ -539,6 +555,9 @@ struct SessionCard: View {
         if store.pending[s.id] != nil { Button("Cancel pending change") { store.pending[s.id] = nil } }
         if !store.sharedWith(s).isEmpty {
             Button("Remove from this account (keep other copies)") { Task { await store.removeCopy(s) } }
+        }
+        if s.isStashed {
+            Button("Delete from Stash…" + suffix, role: .destructive) { store.requestDeleteFromStash(group) }
         }
         Divider()
         Button("Copy session ID") { Launcher.copy(s.cliSessionId) }
