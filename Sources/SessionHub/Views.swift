@@ -3,12 +3,12 @@ import SwiftUI
 
 @main
 struct SessionHubApp: App {
-    @StateObject private var store = Store()
+    @State private var store = Store()
 
     init() {
         // `SessionHub --dump` prints what the scanner sees, for debugging without the UI.
         if CommandLine.arguments.contains("--dump") {
-            let r = Scanner.scan()
+            let r = Scanner().scan()
             print("active account:", r.activeAccount ?? "?", "| hidden non-local:", r.hiddenNonLocal)
             for c in r.columns {
                 let items = r.sessions.filter { $0.columnId == c.id }
@@ -28,11 +28,15 @@ struct SessionHubApp: App {
     var body: some Scene {
         WindowGroup("Session Hub") {
             BoardView()
-                .environmentObject(store)
+                .environment(store)
                 .frame(minWidth: 900, minHeight: 560)
-                .task { await store.refresh() }
-                .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-                    if store.pending.isEmpty { Task { await store.refresh() } }
+                // Initial scan only; after that FSEvents drives rescans when files actually change.
+                .task {
+                    await store.refresh()
+                    // Startup (first scan + first layout) frees large temporary buffers that malloc
+                    // would otherwise keep cached; return them once the board has settled.
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    malloc_zone_pressure_relief(nil, 0)
                 }
         }
         .defaultSize(width: 1400, height: 860)
@@ -46,27 +50,35 @@ struct SessionHubApp: App {
 }
 
 struct BoardView: View {
-    @EnvironmentObject var store: Store
+    @Environment(Store.self) private var store
     @State private var search = ""
     @AppStorage("archiveFilter") private var archiveFilter: ArchiveFilter = .active
     @State private var forkRequest: ForkRequest?
     @State private var confirmApply = false
+    @State private var showColumns = false
 
     @Namespace private var dock
 
     var body: some View {
-        // The board keeps an even margin from every window edge and starts below the toolbar.
-        ScrollView(.horizontal) {
-            HStack(alignment: .top, spacing: Metrics.windowPadding) {
-                ForEach(store.orderedColumns.filter { !store.prefs.hiddenColumns.contains($0.id) }) { column in
-                    ColumnView(column: column, search: search, archiveFilter: archiveFilter) { sessions in
-                        forkRequest = ForkRequest(sessions: sessions)
-                    } onAction: { group, mode in copyCommands(group, mode) }
-                }
+        // The board keeps an even margin from every window edge; no top margin because the toolbar
+        // already leaves the same gap below its controls as above them.
+        HStack(alignment: .top, spacing: 0) {
+            // The Stash is pinned like a sidebar; account columns scroll beside it.
+            if store.columns.contains(where: { $0.kind == .stash }) {
+                columnView(store.column("stash"))
+                    .padding(.leading, Metrics.windowPadding)
+                    .padding(.bottom, Metrics.windowPadding)
             }
-            .padding(Metrics.windowPadding)
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: Metrics.windowPadding) {
+                    ForEach(store.orderedColumns.filter { $0.kind != .stash && !store.prefs.hiddenColumns.contains($0.id) }) { column in
+                        columnView(column)
+                    }
+                }
+                .padding([.horizontal, .bottom], Metrics.windowPadding)
+            }
+            .scrollIndicators(.never)
         }
-        .scrollIndicators(.never)
         .floatingToolbar()
         // Floating controls over the content: they never push the board around.
         .overlay(alignment: .bottom) { dockView }
@@ -99,17 +111,11 @@ struct BoardView: View {
             .help("Filter by archived state (CLI sessions are never archived)")
         }
         ToolbarItemGroup {
-            Menu {
-                ForEach(store.orderedColumns) { c in
-                    Toggle(store.name(for: c), isOn: Binding(
-                        get: { !store.prefs.hiddenColumns.contains(c.id) },
-                        set: { store.setVisible(c, $0) }))
-                }
-                if store.hiddenNonLocal > 0 {
-                    Divider()
-                    Text("\(store.hiddenNonLocal) session(s) from other machines hidden")
-                }
-            } label: { Label("Columns", systemImage: "rectangle.split.3x1") }
+            // A popover (not a menu) so it stays open while several columns are toggled —
+            // macOS menus always close on click.
+            Button { showColumns.toggle() } label: { Label("Columns", systemImage: "rectangle.split.3x1") }
+                .help("Show or hide columns")
+                .popover(isPresented: $showColumns, arrowEdge: .bottom) { ColumnsPopover() }
             Button { Task { await store.undoLast() } } label: { Label("Undo last change", systemImage: "arrow.uturn.backward") }
                 .disabled(store.lastJournal == nil || store.isApplying)
                 .help("Revert the last applied batch of changes")
@@ -118,6 +124,12 @@ struct BoardView: View {
             }
             .help("Rescan sessions")
         }
+    }
+
+    private func columnView(_ column: Column) -> some View {
+        ColumnView(column: column, search: search, archiveFilter: archiveFilter) { sessions in
+            forkRequest = ForkRequest(sessions: sessions)
+        } onAction: { group, mode in copyCommands(group, mode) }
     }
 
     private var applyTitle: String { "Apply \(store.pending.count) change(s)?" }
@@ -217,7 +229,7 @@ enum ArchiveFilter: String, CaseIterable, Identifiable {
 
 struct ColumnView: View {
     static let dragPrefix = "sessionhub-column:"
-    @EnvironmentObject var store: Store
+    @Environment(Store.self) private var store
     let column: Column
     let search: String
     let archiveFilter: ArchiveFilter
@@ -226,14 +238,13 @@ struct ColumnView: View {
     @State private var targeted = false
     @State private var editing = false
     @State private var draft = ""
-    @State private var limit = 150
+    /// Cards built up front per column; more load on demand to keep SwiftUI's view state small.
+    @State private var limit = 50
 
     private var items: [Session] {
         let q = search.lowercased()
-        return store.sessions.filter { s in
-            store.displayColumns(for: s).contains(column.id)
-                && archiveFilter.includes(s)
-                && (q.isEmpty || s.title.lowercased().contains(q) || s.cwd.lowercased().contains(q) || (s.branch ?? "").lowercased().contains(q))
+        return (store.columnItems[column.id] ?? []).filter { s in
+            (column.kind == .stash || archiveFilter.includes(s)) && (q.isEmpty || s.searchKey.contains(q))
         }
     }
 
@@ -253,10 +264,10 @@ struct ColumnView: View {
                             .draggable(store.dragPayload(for: s)) { DragPreview(session: s, count: store.group(for: s).count) }
                     }
                     if list.count > limit {
-                        Button("Show \(min(150, list.count - limit)) more…") { limit += 150 }.buttonStyle(.link).padding(6)
+                        Button("Show \(min(100, list.count - limit)) more…") { limit += 100 }.buttonStyle(.link).padding(6)
                     }
                     if list.isEmpty {
-                        Text(column.kind == .cli ? "Drop a Desktop session here to get a CLI command" : "Drop sessions here")
+                        Text(emptyHint)
                             .font(.callout).foregroundStyle(.tertiary).frame(maxWidth: .infinity).padding(.vertical, 40)
                     }
                 }
@@ -294,10 +305,26 @@ struct ColumnView: View {
         } isTargeted: { targeted = $0 }
     }
 
+    private var emptyHint: String {
+        switch column.kind {
+        case .cli: return "Drop a Desktop session here to get a CLI command"
+        case .stash: return "Drop sessions here to stash them. Stashed sessions belong to no account; drag one onto an account to restore it."
+        case .desktop: return "Drop sessions here"
+        }
+    }
+
+    private var icon: String {
+        switch column.kind {
+        case .cli: return "terminal"
+        case .stash: return "archivebox"
+        case .desktop: return "person.crop.circle"
+        }
+    }
+
     @ViewBuilder private func header(count: Int) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Image(systemName: column.kind == .cli ? "terminal" : "person.crop.circle")
+                Image(systemName: icon)
                 if editing {
                     TextField("Name", text: $draft).textFieldStyle(.roundedBorder)
                         .onSubmit { store.rename(column, to: draft); editing = false }
@@ -318,7 +345,7 @@ struct ColumnView: View {
                     Button("Rename…") { draft = store.name(for: column); editing = true }
                     Button("Move column left") { store.moveColumn(column, by: -1) }
                     Button("Move column right") { store.moveColumn(column, by: 1) }
-                    if column.kind != .cli {
+                    if case .desktop = column.kind {
                         Divider()
                         Button("Copy account ID") { Launcher.copy(column.accountUuid ?? "") }
                         Button("Reveal folder in Finder") { if let d = column.directory { NSWorkspace.shared.activateFileViewerSelecting([d]) } }
@@ -327,10 +354,10 @@ struct ColumnView: View {
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             }
             Group {
-                if let a = column.accountUuid, let o = column.orgUuid {
-                    Text("acct \(a.prefix(8)) · org \(o.prefix(8))")
-                } else {
-                    Text("~/.claude/projects · not tied to an account")
+                switch column.kind {
+                case let .desktop(a, o): Text("acct \(a.prefix(8)) · org \(o.prefix(8))")
+                case .cli: Text("~/.claude/projects · not tied to an account")
+                case .stash: Text("not in any account · transcripts backed up")
                 }
             }.font(.caption.monospaced()).foregroundStyle(.tertiary)
             let hint = store.hint(for: column)
@@ -341,7 +368,7 @@ struct ColumnView: View {
 }
 
 struct SessionCard: View {
-    @EnvironmentObject var store: Store
+    @Environment(Store.self) private var store
     let session: Session
     var onSelect: () -> Void = {}
     @State private var hovering = false
@@ -387,7 +414,7 @@ struct SessionCard: View {
                         .help("Also in: " + shared.map { store.name(for: store.column($0)) }.joined(separator: ", "))
                 }
                 Spacer()
-                Text(s.lastActivity, style: .relative).font(.caption2).foregroundStyle(.tertiary)
+                RelativeTime(date: s.lastActivity)
             }
         }
         .padding(10)
@@ -396,7 +423,8 @@ struct SessionCard: View {
             let shape = RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous)
             shape.fill(Color(nsColor: .controlBackgroundColor))
                 .overlay(shape.fill(selected ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(.clear)))
-                .shadow(color: .black.opacity(hovering ? 0.18 : 0.08), radius: hovering ? 6 : 2, y: hovering ? 3 : 1)
+                // Shadow only while hovered: hundreds of always-on shadows cost GPU time when scrolling.
+                .shadow(color: .black.opacity(hovering ? 0.18 : 0), radius: hovering ? 6 : 0, y: hovering ? 3 : 0)
         }
         .overlay(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous).strokeBorder(
             selected ? AnyShapeStyle(.tint) : move != nil ? AnyShapeStyle(Color.orange) : AnyShapeStyle(Color.primary.opacity(0.06)),
@@ -406,7 +434,8 @@ struct SessionCard: View {
         .animation(.smooth(duration: 0.15), value: hovering)
         .contentShape(RoundedRectangle(cornerRadius: Metrics.cardRadius, style: .continuous))
         .onTapGesture { onSelect() }
-        .contextMenu { menu(s) }
+        // The menu's items are only built for the card under the pointer (right-click always is).
+        .contextMenu { if hovering { menu(s) } }
         .help(s.cwd)
     }
 
@@ -417,9 +446,12 @@ struct SessionCard: View {
         Button("Copy fork-into-new-worktree command" + suffix) { onAction(group, .forkNewWorktree) }
         Button("Copy resume command (same session ID)" + suffix) { onAction(group, .resume) }
         Divider()
-        let targets = store.orderedColumns.filter { $0.kind != .cli && $0.id != s.columnId }
+        let targets = store.orderedColumns.filter { $0.kind != .cli && $0.kind != .stash && $0.id != s.columnId }
+        if !s.isStashed {
+            Button("Move to Stash" + suffix) { stage(group, on: store.column("stash"), copy: false) }
+        }
         if s.isDesktop {
-            Menu("Move to" + suffix) {
+            Menu((s.isStashed ? "Restore to" : "Move to") + suffix) {
                 ForEach(targets) { c in Button(store.name(for: c)) { stage(group, on: c, copy: false) } }
             }
         }
@@ -538,5 +570,68 @@ struct CommandSheet: View {
         }
         .padding(12)
         .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+/// Shared once-a-minute clock so timestamps refresh together instead of every second per card.
+@MainActor
+@Observable
+final class MinuteClock {
+    static let shared = MinuteClock()
+    private(set) var now = Date()
+    @ObservationIgnored private var timer: Timer?
+
+    private init() {
+        let t = Timer(timeInterval: 60, repeats: true) { _ in
+            MainActor.assumeIsolated { MinuteClock.shared.now = Date() }
+        }
+        t.tolerance = 10
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+}
+
+struct RelativeTime: View {
+    let date: Date
+    private static let formatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
+
+    var body: some View {
+        let now = MinuteClock.shared.now
+        Text(now.timeIntervalSince(date) < 60 ? "just now" : Self.formatter.localizedString(for: date, relativeTo: now))
+            .font(.caption2).foregroundStyle(.tertiary)
+            .help(date.formatted(date: .abbreviated, time: .shortened))
+    }
+}
+
+struct ColumnsPopover: View {
+    @Environment(Store.self) private var store
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Columns").font(.headline)
+            ForEach(store.orderedColumns.filter { $0.kind != .stash }) { c in
+                Toggle(isOn: Binding(
+                    get: { !store.prefs.hiddenColumns.contains(c.id) },
+                    set: { store.setVisible(c, $0) })) {
+                    HStack {
+                        Text(store.name(for: c))
+                        Spacer(minLength: 16)
+                        Text("\(store.count(in: c))").monospacedDigit().foregroundStyle(.secondary)
+                    }
+                }
+                .toggleStyle(.checkbox)
+            }
+            if store.hiddenNonLocal > 0 {
+                Divider()
+                Label("\(store.hiddenNonLocal) session(s) from other machines hidden", systemImage: "eye.slash")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(16)
+        .frame(minWidth: 280)
     }
 }

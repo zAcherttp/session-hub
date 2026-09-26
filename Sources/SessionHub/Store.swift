@@ -9,47 +9,122 @@ enum FileOp: Codable, Hashable {
 }
 
 @MainActor
-final class Store: ObservableObject {
+@Observable
+final class Store {
     static let claudeBundleId = "com.anthropic.claudefordesktop"
 
-    @Published var columns: [Column] = []
-    @Published var sessions: [Session] = []
-    @Published var activeAccount: String?
-    @Published var prefs = AccountPrefs()
-    @Published var pending: [String: PendingMove] = [:]
-    @Published var isScanning = false
-    @Published var isApplying = false
-    @Published var message: String?
-    @Published var lastJournal: URL?
-    @Published var hiddenNonLocal = 0
+    var columns: [Column] = []
+    var sessions: [Session] = [] { didSet { rebuildIndexes() } }
+    var activeAccount: String?
+    var prefs = AccountPrefs()
+    var pending: [String: PendingMove] = [:] { didSet { rebuildColumnItems() } }
+    var isScanning = false
+    var isApplying = false
+    var message: String?
+    var lastJournal: URL?
+    var hiddenNonLocal = 0
     /// Selected card ids (`Session.id`).
-    @Published var selection: Set<String> = []
-    private var selectionAnchor: String?
+    var selection: Set<String> = []
+    /// Kept current from NSWorkspace launch/quit notifications instead of polled per render.
+    private(set) var claudeRunning = false
+
+    // Derived once per scan / pending change rather than on every render.
+    /// Cards per column, including staged moves, sorted newest first.
+    private(set) var columnItems: [String: [Session]] = [:]
+    private(set) var counts: [String: Int] = [:]
+    private(set) var hints: [String: String] = [:]
+    @ObservationIgnored private var byId: [String: Session] = [:]
+    @ObservationIgnored private var shared: [String: [String]] = [:]   // sessionId → columns holding it
+
+    @ObservationIgnored private var selectionAnchor: String?
+    @ObservationIgnored private let scanner = Scanner()
+    @ObservationIgnored private var watcher: FolderWatcher?
+    @ObservationIgnored private var desktopCliIds = Set<String>()
+    @ObservationIgnored private var rescanQueued = false
+    @ObservationIgnored private var workspaceObservers: [NSObjectProtocol] = []
 
     init() {
         loadPrefs()
         lastJournal = Self.latestJournal()
+        claudeRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: Self.claudeBundleId).isEmpty
+        let nc = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            workspaceObservers.append(nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+                guard app?.bundleIdentifier == Store.claudeBundleId else { return }
+                MainActor.assumeIsolated { self?.claudeRunning = name == NSWorkspace.didLaunchApplicationNotification }
+            })
+        }
+        watcher = FolderWatcher(paths: [Paths.desktopSessions.path, Paths.cliProjects.path, Paths.desktopConfig.path]) { [weak self] paths in
+            MainActor.assumeIsolated { self?.filesChanged(paths) }
+        }
     }
 
     // MARK: Loading
 
     func refresh() async {
-        guard !isScanning else { return }
+        guard !isScanning else { rescanQueued = true; return }
         isScanning = true
-        let result = await Task.detached(priority: .userInitiated) { Scanner.scan() }.value
-        columns = result.columns
-        sessions = result.sessions.sorted { $0.lastActivity > $1.lastActivity }
-        activeAccount = result.activeAccount
-        hiddenNonLocal = result.hiddenNonLocal
-        let ids = Set(sessions.map(\.id))
-        pending = pending.filter { ids.contains($0.key) }
-        selection.formIntersection(ids)
+        let scanner = scanner
+        let result = await Task.detached(priority: .utility) { scanner.scan() }.value
+        let sorted = result.sessions.sorted { $0.lastActivity > $1.lastActivity }
+        // Only publish what changed, so an unchanged rescan doesn't redraw anything.
+        if columns != result.columns { columns = result.columns }
+        if sessions != sorted { sessions = sorted }
+        if activeAccount != result.activeAccount { activeAccount = result.activeAccount }
+        if hiddenNonLocal != result.hiddenNonLocal { hiddenNonLocal = result.hiddenNonLocal }
+        desktopCliIds = result.desktopCliIds
+        let ids = Set(byId.keys)
+        if pending.keys.contains(where: { !ids.contains($0) }) { pending = pending.filter { ids.contains($0.key) } }
+        if !selection.isSubset(of: ids) { selection.formIntersection(ids) }
         isScanning = false
+        if rescanQueued { rescanQueued = false; await refresh() }
+    }
+
+    /// FSEvents callback. Skips churn from transcripts the board doesn't show
+    /// (Desktop-owned conversations and subagent logs are written constantly while Claude works).
+    private func filesChanged(_ paths: [String]) {
+        let projects = Paths.cliProjects.path + "/"
+        let relevant = paths.contains { path in
+            guard path.hasPrefix(projects) else { return true }   // Desktop metadata or config
+            let rel = path.dropFirst(projects.count).split(separator: "/")
+            guard rel.count == 2, rel[1].hasSuffix(".jsonl") else { return rel.count == 1 }  // new project dir
+            return !desktopCliIds.contains(String(rel[1].dropLast(6)))
+        }
+        if relevant { Task { await refresh() } }
+    }
+
+    private func rebuildIndexes() {
+        var byId: [String: Session] = [:], shared: [String: [String]] = [:]
+        var counts: [String: Int] = [:], repos: [String: [String: Int]] = [:]
+        for s in sessions {
+            byId[s.id] = s
+            if s.isDesktop { shared[s.sessionId, default: []].append(s.columnId) }
+            if !s.isArchived { counts[s.columnId, default: 0] += 1 }
+            repos[s.columnId, default: [:]][s.repoName, default: 0] += 1
+        }
+        self.byId = byId
+        self.shared = shared
+        if self.counts != counts { self.counts = counts }
+        let hints = repos.mapValues { $0.sorted { $0.value > $1.value }.prefix(3).map(\.key).joined(separator: ", ") }
+        if self.hints != hints { self.hints = hints }
+        rebuildColumnItems()
+    }
+
+    private func rebuildColumnItems() {
+        var items: [String: [Session]] = [:]
+        for s in sessions {
+            for c in displayColumns(for: s) { items[c, default: []].append(s) }
+        }
+        if columnItems != items { columnItems = items }
     }
 
     var orderedColumns: [Column] {
         let order = prefs.columnOrder
         return columns.sorted { a, b in
+            // The Stash is a fixed first column.
+            if a.kind == .stash { return b.kind != .stash }
+            if b.kind == .stash { return false }
             let ia = order.firstIndex(of: a.id) ?? Int.max, ib = order.firstIndex(of: b.id) ?? Int.max
             if ia != ib { return ia < ib }
             if a.kind == .cli { return false }
@@ -60,7 +135,7 @@ final class Store: ObservableObject {
         }
     }
 
-    func count(in column: Column) -> Int { sessions.filter { $0.columnId == column.id && !$0.isArchived }.count }
+    func count(in column: Column) -> Int { counts[column.id] ?? 0 }
 
     /// Columns a card should render in: its own (unless moving away) plus any staged target.
     func displayColumns(for s: Session) -> [String] {
@@ -70,24 +145,23 @@ final class Store: ObservableObject {
 
     /// Other Desktop accounts that already hold a copy of this session.
     func sharedWith(_ s: Session) -> [String] {
-        guard s.isDesktop else { return [] }
-        return sessions.filter { $0.sessionId == s.sessionId && $0.columnId != s.columnId }.map(\.columnId)
+        (shared[s.sessionId] ?? []).filter { $0 != s.columnId }
     }
 
     func name(for column: Column) -> String {
         if let n = prefs.nicknames[column.id], !n.isEmpty { return n }
         switch column.kind {
         case .cli: return "Claude Code CLI"
-        case let .desktop(a, _): return "Account \(a.prefix(8))"
+        case .stash: return "Stash"
+        case let .desktop(a, o):
+            // Accounts with several organizations get the org in the default name to tell them apart.
+            let orgs = columns.filter { $0.accountUuid == a }.count
+            return orgs > 1 ? "Account \(a.prefix(8)) · org \(o.prefix(8))" : "Account \(a.prefix(8))"
         }
     }
 
     /// Top repos in a column, to help tell accounts apart before they're named.
-    func hint(for column: Column) -> String {
-        var counts: [String: Int] = [:]
-        for s in sessions where s.columnId == column.id { counts[s.repoName, default: 0] += 1 }
-        return counts.sorted { $0.value > $1.value }.prefix(3).map(\.key).joined(separator: ", ")
-    }
+    func hint(for column: Column) -> String { hints[column.id] ?? "" }
 
     func rename(_ column: Column, to name: String) {
         prefs.nicknames[column.id] = name.trimmingCharacters(in: .whitespaces)
@@ -101,6 +175,7 @@ final class Store: ObservableObject {
 
     /// Drag-reorder: puts `columnId` where `target` currently sits.
     func reorderColumn(_ columnId: String, onto target: Column) {
+        guard columnId != "stash", target.kind != .stash else { return }
         var ids = orderedColumns.map(\.id)
         guard let from = ids.firstIndex(of: columnId), let to = ids.firstIndex(of: target.id), from != to else { return }
         ids.remove(at: from)
@@ -110,7 +185,7 @@ final class Store: ObservableObject {
     }
 
     func moveColumn(_ column: Column, by delta: Int) {
-        var ids = orderedColumns.map(\.id)
+        var ids = orderedColumns.filter { $0.kind != .stash }.map(\.id)
         guard let i = ids.firstIndex(of: column.id) else { return }
         let j = max(0, min(ids.count - 1, i + delta))
         ids.swapAt(i, j)
@@ -148,7 +223,7 @@ final class Store: ObservableObject {
     /// What an action on `s` applies to: the whole selection if `s` is part of it, otherwise just `s`.
     func group(for s: Session) -> [Session] {
         guard selection.contains(s.id) else { return [s] }
-        return sessions.filter { selection.contains($0.id) }
+        return selection.compactMap { byId[$0] }.sorted { $0.lastActivity > $1.lastActivity }
     }
 
     /// Drag payload: newline-separated card ids.
@@ -160,7 +235,7 @@ final class Store: ObservableObject {
 
     /// `copy` shares the session with the target account instead of moving it (CLI imports always copy).
     func drop(cardId: String, on column: Column, copy: Bool) -> DropOutcome {
-        guard let s = sessions.first(where: { $0.id == cardId }) else { return .ignored }
+        guard let s = byId[cardId] else { return .ignored }
         if column.kind == .cli {
             // Desktop → CLI isn't an ownership change; it means "continue this in a terminal".
             return s.isDesktop ? .forkRequested(s) : .ignored
@@ -184,6 +259,7 @@ final class Store: ObservableObject {
 
     func discardPending() { pending = [:] }
 
+    /// Live check used when actually applying changes (the cached `claudeRunning` drives the UI).
     var claudeIsRunning: Bool {
         !NSRunningApplication.runningApplications(withBundleIdentifier: Self.claudeBundleId).isEmpty
     }
@@ -191,7 +267,12 @@ final class Store: ObservableObject {
     /// Changes touching the signed-in account must happen while Desktop is closed,
     /// otherwise its in-memory copy can write the file back to the old folder.
     var pendingNeedsRelaunch: Bool {
-        guard claudeIsRunning else { return false }
+        guard claudeRunning else { return false }
+        let active = (activeAccount ?? "-") + "/"
+        return pending.values.contains { m in m.to.hasPrefix(active) || (!m.copy && m.from.hasPrefix(active)) }
+    }
+
+    private var pendingNeedsRelaunchIgnoringState: Bool {
         let active = (activeAccount ?? "-") + "/"
         return pending.values.contains { m in m.to.hasPrefix(active) || (!m.copy && m.from.hasPrefix(active)) }
     }
@@ -201,7 +282,7 @@ final class Store: ObservableObject {
     func applyPending() async {
         let ops = pending.values.compactMap { plan($0) }.flatMap { $0 }
         guard !ops.isEmpty else { pending = [:]; return }
-        let relaunch = pendingNeedsRelaunch
+        let relaunch = claudeIsRunning && pendingNeedsRelaunchIgnoringState
         await run(ops, relaunch: relaunch, label: "Applied \(pending.count) change(s)")
         pending = [:]
     }
@@ -224,8 +305,27 @@ final class Store: ObservableObject {
     }
 
     private func plan(_ move: PendingMove) -> [FileOp]? {
-        guard let s = sessions.first(where: { $0.id == move.cardId }),
-              let target = columns.first(where: { $0.id == move.to })?.directory else { return nil }
+        guard let s = byId[move.cardId], let ops = metadataOps(for: s, move) else { return nil }
+        return ops + transcriptOps(for: s, move)
+    }
+
+    /// Stashing keeps a backup of the conversation (Claude Code's cleanup can delete old transcripts);
+    /// restoring from the Stash puts the backup back if the original has gone.
+    private func transcriptOps(for s: Session, _ move: PendingMove) -> [FileOp] {
+        let fm = FileManager.default
+        let backup = Paths.stashTranscripts.appendingPathComponent(s.cliSessionId + ".jsonl").path
+        let original = s.transcriptURL.path
+        if move.to == "stash", fm.fileExists(atPath: original), !fm.fileExists(atPath: backup) {
+            return [.copy(from: original, to: backup)]
+        }
+        if s.isStashed, move.to != "stash", !fm.fileExists(atPath: original), fm.fileExists(atPath: backup) {
+            return [.copy(from: backup, to: original)]
+        }
+        return []
+    }
+
+    private func metadataOps(for s: Session, _ move: PendingMove) -> [FileOp]? {
+        guard let target = columns.first(where: { $0.id == move.to })?.directory else { return nil }
         if let file = s.desktopFile {
             let dest = target.appendingPathComponent(file.lastPathComponent).path
             let alreadyThere = FileManager.default.fileExists(atPath: dest)
@@ -255,6 +355,7 @@ final class Store: ObservableObject {
             "permissionMode": "default",
         ]
         if let b = s.branch { meta["branch"] = b }
+        if move.to == "stash" { meta["isArchived"] = true }
         guard let data = try? JSONSerialization.data(withJSONObject: meta, options: [.prettyPrinted, .sortedKeys]) else { return nil }
         return [.create(path: target.appendingPathComponent(id + ".json").path, data: data)]
     }
@@ -278,20 +379,38 @@ final class Store: ObservableObject {
     /// Executes ops, returning the inverse ops (in reverse order). Rolls back on failure.
     private func execute(_ ops: [FileOp]) throws -> [FileOp] {
         let fm = FileManager.default
-        // Safety net: only ever touch local_*.json files inside Claude's session folders.
-        let root = Paths.desktopSessions.standardizedFileURL.path + "/"
+        // Safety net: session metadata (local_*.json) only inside account folders or the Stash;
+        // transcripts (*.jsonl) only copied between ~/.claude/projects and the Stash backup, and a
+        // transcript is only ever removed from ~/.claude/projects when a Stash backup of it exists.
+        func isMetadata(_ u: URL) -> Bool {
+            u.lastPathComponent.hasPrefix("local_") && u.pathExtension == "json"
+                && (u.path.hasPrefix(Paths.desktopSessions.standardizedFileURL.path + "/")
+                    || u.deletingLastPathComponent().path == Paths.stash.standardizedFileURL.path)
+        }
+        func isTranscript(_ u: URL) -> Bool {
+            u.pathExtension == "jsonl"
+                && (u.path.hasPrefix(Paths.cliProjects.standardizedFileURL.path + "/")
+                    || u.deletingLastPathComponent().path == Paths.stashTranscripts.standardizedFileURL.path)
+        }
+        func hasBackup(_ u: URL) -> Bool {
+            fm.fileExists(atPath: Paths.stashTranscripts.appendingPathComponent(u.lastPathComponent).path)
+        }
         for op in ops {
-            let paths: [String]
+            let ok: Bool
             switch op {
-            case let .move(a, b), let .copy(a, b): paths = [a, b]
-            case let .create(p, _), let .remove(p): paths = [p]
+            case let .move(a, b):
+                ok = isMetadata(URL(fileURLWithPath: a).standardizedFileURL) && isMetadata(URL(fileURLWithPath: b).standardizedFileURL)
+            case let .copy(a, b):
+                let (ua, ub) = (URL(fileURLWithPath: a).standardizedFileURL, URL(fileURLWithPath: b).standardizedFileURL)
+                ok = (isMetadata(ua) && isMetadata(ub)) || (isTranscript(ua) && isTranscript(ub))
+            case let .create(p, _):
+                ok = isMetadata(URL(fileURLWithPath: p).standardizedFileURL)
+            case let .remove(p):
+                let u = URL(fileURLWithPath: p).standardizedFileURL
+                let inProjects = u.path.hasPrefix(Paths.cliProjects.standardizedFileURL.path + "/")
+                ok = isMetadata(u) || (isTranscript(u) && (!inProjects || hasBackup(u)))
             }
-            for p in paths {
-                let std = URL(fileURLWithPath: p).standardizedFileURL
-                guard std.path.hasPrefix(root), std.lastPathComponent.hasPrefix("local_"), std.pathExtension == "json" else {
-                    throw err("Refusing to touch \(p): outside Claude's session folders.")
-                }
-            }
+            guard ok else { throw err("Refusing an unexpected file change: \(op)") }
         }
         var undo: [FileOp] = []
         do {
@@ -327,7 +446,9 @@ final class Store: ObservableObject {
     }
 
     private func backup(_ path: String) throws {
-        let rel = path.replacingOccurrences(of: Paths.desktopSessions.path + "/", with: "")
+        let rel = path.hasPrefix(Paths.hubSupport.path + "/")
+            ? path.replacingOccurrences(of: Paths.hubSupport.path + "/", with: "")
+            : path.replacingOccurrences(of: Paths.desktopSessions.path + "/", with: "")
         let dest = Paths.backups.appendingPathComponent(Self.stamp()).appendingPathComponent(rel)
         try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
         if !FileManager.default.fileExists(atPath: dest.path) {

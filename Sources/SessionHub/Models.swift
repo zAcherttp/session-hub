@@ -10,6 +10,10 @@ enum Paths {
     static let hubSupport = home.appendingPathComponent("Library/Application Support/SessionHub")
     static let hubPrefs = hubSupport.appendingPathComponent("accounts.json")
     static let backups = hubSupport.appendingPathComponent("backups")
+    /// Stashed Desktop session files: owned by no account, so no Claude Desktop login lists them.
+    static let stash = hubSupport.appendingPathComponent("stash")
+    /// Backup copies of stashed sessions' transcripts, in case Claude Code's cleanup deletes the originals.
+    static let stashTranscripts = stash.appendingPathComponent("transcripts")
 
     /// Claude Code's project-dir slug: every non-alphanumeric character becomes "-".
     static func projectSlug(for cwd: String) -> String {
@@ -21,19 +25,25 @@ enum Paths {
     }
 }
 
-/// One Desktop account + organization pair, i.e. one `claude-code-sessions/<account>/<org>` folder.
+/// One Desktop account + organization pair (a `claude-code-sessions/<account>/<org>` folder),
+/// the CLI's transcripts, or the Stash.
 struct Column: Identifiable, Hashable {
-    enum Kind: Hashable { case desktop(account: String, org: String), cli }
+    enum Kind: Hashable { case desktop(account: String, org: String), cli, stash }
     let kind: Kind
     var id: String {
         switch kind {
         case let .desktop(a, o): return "\(a)/\(o)"
         case .cli: return "cli"
+        case .stash: return "stash"
         }
     }
+    /// Folder holding this column's session files (the CLI column has none).
     var directory: URL? {
-        if case let .desktop(a, o) = kind { return Paths.desktopSessions.appendingPathComponent(a).appendingPathComponent(o) }
-        return nil
+        switch kind {
+        case let .desktop(a, o): return Paths.desktopSessions.appendingPathComponent(a).appendingPathComponent(o)
+        case .stash: return Paths.stash
+        case .cli: return nil
+        }
     }
     var accountUuid: String? {
         if case let .desktop(a, _) = kind { return a }
@@ -66,11 +76,16 @@ struct Session: Identifiable, Hashable {
     let model: String?
     let statusLine: String?
     let prCount: Int
+    /// Checked once per scan so cards never hit the disk while rendering.
+    let cwdExists: Bool
+    /// Lowercased title + folder + branch, built once per scan for the search filter.
+    let searchKey: String
 
+    /// Has a Desktop-format metadata file (in an account folder or the Stash).
     var isDesktop: Bool { if case .desktop = source { return true } else { return false } }
+    var isStashed: Bool { columnId == "stash" }
     var desktopFile: URL? { if case let .desktop(u) = source { return u } else { return nil } }
     var isWorktree: Bool { cwd.contains("/.claude/worktrees/") }
-    var cwdExists: Bool { FileManager.default.fileExists(atPath: cwd) }
     var transcriptURL: URL { Paths.transcript(cwd: cwd, cliSessionId: cliSessionId) }
     var repoName: String { (originCwd as NSString).lastPathComponent }
 }

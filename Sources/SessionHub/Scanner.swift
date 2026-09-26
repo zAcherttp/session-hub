@@ -1,14 +1,298 @@
 import Foundation
 
 /// Reads Claude Desktop session metadata and CLI transcripts from disk. Read-only.
-enum Scanner {
+///
+/// Parsed results are cached by file modification date and size, so a rescan only
+/// re-reads files that changed. Transcripts are read in bounded pieces from the head and
+/// the tail, never whole, which keeps memory flat even for multi-megabyte files.
+final class Scanner: @unchecked Sendable {
     struct Result {
         var columns: [Column]
         var sessions: [Session]
         var activeAccount: String?
         /// Sessions skipped because they don't belong to this Mac.
         var hiddenNonLocal: Int
+        /// Transcript ids owned by Desktop sessions (not shown in the CLI column).
+        var desktopCliIds: Set<String>
     }
+
+    private struct Stamp: Equatable {
+        let modified: Date
+        let size: Int
+    }
+
+    private struct DesktopEntry {
+        let stamp: Stamp
+        let session: Session?
+        let cliIds: [String]
+    }
+
+    private struct TranscriptEntry {
+        let stamp: Stamp
+        let session: Session?
+    }
+
+    private let lock = NSLock()
+    private var desktopCache: [String: DesktopEntry] = [:]
+    private var transcriptCache: [String: TranscriptEntry] = [:]
+
+    // MARK: Scan
+
+    func scan() -> Result {
+        var columns: [Column] = []
+        var sessions: [Session] = []
+        var desktopCliIds = Set<String>()
+        var hidden = 0
+        var seenDesktop = Set<String>()
+
+        // The Stash is read like an account folder; its sessions belong to no Desktop login.
+        let stash = Column(kind: .stash)
+        columns.append(stash)
+        for (url, stamp) in Self.files(in: Paths.stash, where: { $0.hasPrefix("local_") && $0.hasSuffix(".json") }) {
+            seenDesktop.insert(url.path)
+            let entry = cachedDesktop(url: url, stamp: stamp, columnId: stash.id)
+            desktopCliIds.formUnion(entry.cliIds)
+            if let s = entry.session { sessions.append(s) }
+        }
+
+        for account in Self.children(of: Paths.desktopSessions).sorted() where Self.isUUID(account) {
+            let accountDir = Paths.desktopSessions.appendingPathComponent(account)
+            for org in Self.children(of: accountDir).sorted() where Self.isUUID(org) {
+                let column = Column(kind: .desktop(account: account, org: org))
+                columns.append(column)
+                let dir = accountDir.appendingPathComponent(org)
+                for (url, stamp) in Self.files(in: dir, where: { $0.hasPrefix("local_") && $0.hasSuffix(".json") }) {
+                    seenDesktop.insert(url.path)
+                    let entry = cachedDesktop(url: url, stamp: stamp, columnId: column.id)
+                    desktopCliIds.formUnion(entry.cliIds)
+                    guard let s = entry.session else { continue }
+                    guard Self.isLocal(cwd: s.cwd, originCwd: s.originCwd) else { hidden += 1; continue }
+                    sessions.append(s)
+                }
+            }
+        }
+
+        columns.append(Column(kind: .cli))
+        let cli = scanCLI(excluding: desktopCliIds)
+        let localCli = cli.filter { Self.isLocal(cwd: $0.cwd, originCwd: $0.originCwd) }
+        hidden += cli.count - localCli.count
+        sessions.append(contentsOf: localCli)
+
+        lock.lock()
+        desktopCache = desktopCache.filter { seenDesktop.contains($0.key) }
+        lock.unlock()
+
+        let active = Self.readJSON(Paths.desktopConfig)?["lastKnownAccountUuid"] as? String
+        // Hand freed scan buffers back to the system instead of letting malloc keep them dirty.
+        malloc_zone_pressure_relief(nil, 0)
+        return Result(columns: columns, sessions: sessions, activeAccount: active,
+                      hiddenNonLocal: hidden, desktopCliIds: desktopCliIds)
+    }
+
+    private func cachedDesktop(url: URL, stamp: Stamp, columnId: String) -> DesktopEntry {
+        lock.lock()
+        if let hit = desktopCache[url.path], hit.stamp == stamp { lock.unlock(); return hit }
+        lock.unlock()
+        let entry = Self.parseDesktop(url: url, columnId: columnId, stamp: stamp)
+        lock.lock()
+        desktopCache[url.path] = entry
+        lock.unlock()
+        return entry
+    }
+
+    private func scanCLI(excluding desktopIds: Set<String>) -> [Session] {
+        var files: [(URL, Stamp)] = []
+        for p in Self.children(of: Paths.cliProjects) {
+            let dir = Paths.cliProjects.appendingPathComponent(p)
+            for (url, stamp) in Self.files(in: dir, where: { $0.hasSuffix(".jsonl") })
+            where !desktopIds.contains(url.deletingPathExtension().lastPathComponent) {
+                files.append((url, stamp))
+            }
+        }
+
+        var out = [Session?](repeating: nil, count: files.count)
+        var fresh: [(String, TranscriptEntry)] = []
+        let outLock = NSLock()
+        // A few parallel readers are plenty for disk-bound work and keep peak buffer memory low.
+        let stripes = min(4, max(1, files.count))
+        DispatchQueue.concurrentPerform(iterations: stripes) { stripe in
+          // One read buffer per reader, reused for every file: no per-read heap churn.
+          let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: Self.tailLimit, alignment: 16)
+          defer { buffer.deallocate() }
+          for i in stride(from: stripe, to: files.count, by: stripes) {
+            let (url, stamp) = files[i]
+            lock.lock()
+            let hit = transcriptCache[url.path]
+            lock.unlock()
+            if let hit, hit.stamp == stamp {
+                outLock.lock(); out[i] = hit.session; outLock.unlock()
+                continue
+            }
+            // Drain Foundation temporaries per file so parallel reads don't pile up.
+            let session = autoreleasepool { Self.parseTranscript(url, modified: stamp.modified, buffer: buffer) }
+            outLock.lock()
+            out[i] = session
+            fresh.append((url.path, TranscriptEntry(stamp: stamp, session: session)))
+            outLock.unlock()
+          }
+        }
+
+        lock.lock()
+        let live = Set(files.map(\.0.path))
+        transcriptCache = transcriptCache.filter { live.contains($0.key) }
+        for (k, v) in fresh { transcriptCache[k] = v }
+        lock.unlock()
+        return out.compactMap { $0 }
+    }
+
+    // MARK: Desktop
+
+    private static func parseDesktop(url: URL, columnId: String, stamp: Stamp) -> DesktopEntry {
+        guard let j = readJSON(url),
+              let id = j["sessionId"] as? String,
+              let cli = j["cliSessionId"] as? String,
+              let cwd = j["cwd"] as? String else {
+            return DesktopEntry(stamp: stamp, session: nil, cliIds: [])
+        }
+        let ms = (j["lastActivityAt"] as? Double) ?? (j["createdAt"] as? Double) ?? 0
+        let summary = j["postTurnSummary"] as? [String: Any]
+        let title = (j["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled session"
+        let branch = j["branch"] as? String
+        let session = Session(
+            sessionId: id,
+            source: .desktop(fileURL: url),
+            columnId: columnId,
+            cliSessionId: cli,
+            title: title,
+            cwd: cwd,
+            originCwd: (j["originCwd"] as? String) ?? cwd,
+            branch: branch,
+            worktreeName: j["worktreeName"] as? String,
+            lastActivity: Date(timeIntervalSince1970: ms / 1000),
+            isArchived: (j["isArchived"] as? Bool) ?? false,
+            isStarred: (j["isStarred"] as? Bool) ?? false,
+            model: j["model"] as? String,
+            statusLine: summary?["status_detail"] as? String,
+            prCount: (j["prs"] as? [Any])?.count ?? 0,
+            cwdExists: FileManager.default.fileExists(atPath: cwd),
+            searchKey: searchKey(title, cwd, branch)
+        )
+        return DesktopEntry(stamp: stamp, session: session, cliIds: [cli] + ((j["priorCliSessionIds"] as? [String]) ?? []))
+    }
+
+    // MARK: CLI transcripts
+
+    private static let headLimit = 128 * 1024
+    private static let tailLimit = 512 * 1024
+
+    static func parseTranscript(_ url: URL, modified: Date,
+                                buffer: UnsafeMutableRawBufferPointer? = nil) -> Session? {
+        let fd = open(url.path, O_RDONLY)
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        let owned = buffer == nil ? UnsafeMutableRawBufferPointer.allocate(byteCount: tailLimit, alignment: 16) : nil
+        defer { owned?.deallocate() }
+        let buf = buffer ?? owned!
+        let size = Int(lseek(fd, 0, SEEK_END))
+
+        /// Reads `count` bytes at `offset` into the shared buffer and wraps them without copying.
+        func read(at offset: Int, count: Int) -> Data {
+            let n = pread(fd, buf.baseAddress, min(count, buf.count), off_t(offset))
+            guard n > 0 else { return Data() }
+            return Data(bytesNoCopy: buf.baseAddress!, count: n, deallocator: .none)
+        }
+
+        // Head: one bounded read, parsed line by line only until cwd, entrypoint and the first prompt are known.
+        var cwd: String?, entrypoint: String?, branch: String?, firstPrompt: String?
+        let head = read(at: 0, count: min(size, headLimit))
+        var lineStart = head.startIndex
+        while lineStart < head.endIndex, let nl = head[lineStart...].firstIndex(of: 0x0A) {
+            let line = head[lineStart..<nl]
+            lineStart = nl + 1
+            guard let o = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
+            if cwd == nil, let c = o["cwd"] as? String { cwd = c }
+            if entrypoint == nil, let e = o["entrypoint"] as? String {
+                entrypoint = e
+                // Desktop-originated transcripts are listed via Desktop metadata; stop early.
+                if e == "claude-desktop" { return nil }
+            }
+            if branch == nil, let b = o["gitBranch"] as? String, !b.isEmpty, b != "HEAD" { branch = b }
+            if firstPrompt == nil, o["type"] as? String == "user", o["isMeta"] as? Bool != true,
+               let text = messageText(o["message"]), !text.hasPrefix("<") {
+                firstPrompt = text
+            }
+            if cwd != nil, entrypoint != nil, firstPrompt != nil { break }
+        }
+        guard let cwd, let firstPrompt else { return nil }
+
+        // Tail: search backwards for the latest title/model/branch, widening only if needed.
+        var title: String?, model: String?
+        var window = 64 * 1024
+        while true {
+            let start = max(0, size - window)
+            let tail = read(at: start, count: size - start)
+            title = title ?? lastTitle(in: tail)
+            model = model ?? lastMatch(#""model":""#, prefix: "claude-", in: tail)
+            if branch == nil, let b = lastMatch(#""gitBranch":""#, prefix: nil, in: tail), b != "HEAD" { branch = b }
+            if (title != nil && model != nil) || start == 0 || window >= tailLimit { break }
+            window = min(window * 4, tailLimit)
+        }
+
+        let origin = cwd.range(of: "/.claude/worktrees/").map { String(cwd[..<$0.lowerBound]) } ?? cwd
+        let wt = cwd.range(of: "/.claude/worktrees/").map { String(cwd[$0.upperBound...]).components(separatedBy: "/").first ?? "" }
+        let id = url.deletingPathExtension().lastPathComponent
+        let finalTitle = title ?? String(firstPrompt.replacingOccurrences(of: "\n", with: " ").prefix(90))
+        return Session(
+            sessionId: id,
+            source: .cli,
+            columnId: "cli",
+            cliSessionId: id,
+            title: finalTitle,
+            cwd: cwd,
+            originCwd: origin,
+            branch: branch,
+            worktreeName: wt,
+            lastActivity: modified,
+            isArchived: false,
+            isStarred: false,
+            model: model,
+            statusLine: nil,
+            prCount: 0,
+            cwdExists: FileManager.default.fileExists(atPath: cwd),
+            searchKey: searchKey(finalTitle, cwd, branch)
+        )
+    }
+
+    /// The most recent custom or AI title line in `data`.
+    private static func lastTitle(in data: Data) -> String? {
+        let custom = data.range(of: Data(#""type":"custom-title""#.utf8), options: .backwards)
+        let ai = data.range(of: Data(#""type":"ai-title""#.utf8), options: .backwards)
+        guard let hit = [custom, ai].compactMap({ $0 }).max(by: { $0.lowerBound < $1.lowerBound }),
+              let o = try? JSONSerialization.jsonObject(with: line(around: hit, in: data)) as? [String: Any] else { return nil }
+        return (o["customTitle"] as? String) ?? (o["aiTitle"] as? String)
+    }
+
+    /// The string value after the last occurrence of `key` (e.g. `"model":"`), optionally requiring a prefix.
+    private static func lastMatch(_ key: String, prefix: String?, in data: Data) -> String? {
+        var searchEnd = data.endIndex
+        let keyData = Data(key.utf8)
+        while let r = data.range(of: keyData, options: .backwards, in: data.startIndex..<searchEnd) {
+            if let close = data[r.upperBound...].firstIndex(of: UInt8(ascii: "\"")) {
+                let value = String(decoding: data[r.upperBound..<close], as: UTF8.self)
+                if prefix.map(value.hasPrefix) ?? true { return value }
+            }
+            searchEnd = r.lowerBound
+        }
+        return nil
+    }
+
+    private static func line(around r: Range<Data.Index>, in data: Data) -> Data {
+        let start = data[..<r.lowerBound].lastIndex(of: 0x0A).map { $0 + 1 } ?? data.startIndex
+        let end = data[r.upperBound...].firstIndex(of: 0x0A) ?? data.endIndex
+        return data[start..<end]
+    }
+
+    // MARK: Helpers
 
     /// A session counts as local when its working folder is in this Mac user's home or exists on this disk.
     /// Anything else (another user's or another machine's paths) is never shown, so it can't be edited.
@@ -19,163 +303,9 @@ enum Scanner {
             || fm.fileExists(atPath: cwd) || fm.fileExists(atPath: originCwd)
     }
 
-    static func scan() -> Result {
-        let fm = FileManager.default
-        var columns: [Column] = []
-        var sessions: [Session] = []
-        var desktopCliIds = Set<String>()
-        var hidden = 0
-
-        let accounts = (try? fm.contentsOfDirectory(atPath: Paths.desktopSessions.path)) ?? []
-        for account in accounts.sorted() where isUUID(account) {
-            let accountDir = Paths.desktopSessions.appendingPathComponent(account)
-            let orgs = (try? fm.contentsOfDirectory(atPath: accountDir.path)) ?? []
-            for org in orgs.sorted() where isUUID(org) {
-                let column = Column(kind: .desktop(account: account, org: org))
-                columns.append(column)
-                let dir = accountDir.appendingPathComponent(org)
-                let files = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
-                for file in files where file.hasPrefix("local_") && file.hasSuffix(".json") {
-                    let url = dir.appendingPathComponent(file)
-                    guard let s = parseDesktop(url: url, columnId: column.id) else { continue }
-                    desktopCliIds.insert(s.cliSessionId)
-                    guard isLocal(cwd: s.cwd, originCwd: s.originCwd) else { hidden += 1; continue }
-                    if let json = readJSON(url), let prior = json["priorCliSessionIds"] as? [String] {
-                        desktopCliIds.formUnion(prior)
-                    }
-                    sessions.append(s)
-                }
-            }
-        }
-
-        columns.append(Column(kind: .cli))
-        let cli = scanCLI(excluding: desktopCliIds)
-        let localCli = cli.filter { isLocal(cwd: $0.cwd, originCwd: $0.originCwd) }
-        hidden += cli.count - localCli.count
-        sessions.append(contentsOf: localCli)
-
-        let active = readJSON(Paths.desktopConfig)?["lastKnownAccountUuid"] as? String
-        return Result(columns: columns, sessions: sessions, activeAccount: active, hiddenNonLocal: hidden)
+    static func searchKey(_ title: String, _ cwd: String, _ branch: String?) -> String {
+        [title, cwd, branch ?? ""].joined(separator: "\n").lowercased()
     }
-
-    // MARK: Desktop
-
-    static func parseDesktop(url: URL, columnId: String) -> Session? {
-        guard let j = readJSON(url),
-              let id = j["sessionId"] as? String,
-              let cli = j["cliSessionId"] as? String,
-              let cwd = j["cwd"] as? String else { return nil }
-        let ms = (j["lastActivityAt"] as? Double) ?? (j["createdAt"] as? Double) ?? 0
-        let summary = j["postTurnSummary"] as? [String: Any]
-        return Session(
-            sessionId: id,
-            source: .desktop(fileURL: url),
-            columnId: columnId,
-            cliSessionId: cli,
-            title: (j["title"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled session",
-            cwd: cwd,
-            originCwd: (j["originCwd"] as? String) ?? cwd,
-            branch: j["branch"] as? String,
-            worktreeName: j["worktreeName"] as? String,
-            lastActivity: Date(timeIntervalSince1970: ms / 1000),
-            isArchived: (j["isArchived"] as? Bool) ?? false,
-            isStarred: (j["isStarred"] as? Bool) ?? false,
-            model: j["model"] as? String,
-            statusLine: summary?["status_detail"] as? String,
-            prCount: (j["prs"] as? [Any])?.count ?? 0
-        )
-    }
-
-    // MARK: CLI
-
-    static func scanCLI(excluding desktopIds: Set<String>) -> [Session] {
-        let fm = FileManager.default
-        let projects = (try? fm.contentsOfDirectory(atPath: Paths.cliProjects.path)) ?? []
-        var out: [Session] = []
-        let lock = NSLock()
-        var files: [URL] = []
-        for p in projects {
-            let dir = Paths.cliProjects.appendingPathComponent(p)
-            for f in (try? fm.contentsOfDirectory(atPath: dir.path)) ?? [] where f.hasSuffix(".jsonl") {
-                let id = String(f.dropLast(6))
-                if !desktopIds.contains(id) { files.append(dir.appendingPathComponent(f)) }
-            }
-        }
-        DispatchQueue.concurrentPerform(iterations: files.count) { i in
-            if let s = parseTranscript(files[i]) {
-                lock.lock(); out.append(s); lock.unlock()
-            }
-        }
-        return out
-    }
-
-    static func parseTranscript(_ url: URL) -> Session? {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-        defer { try? handle.close() }
-        let size = (try? handle.seekToEnd()) ?? 0
-        try? handle.seek(toOffset: 0)
-        let head = String(decoding: (try? handle.read(upToCount: 96 * 1024)) ?? Data(), as: UTF8.self)
-
-        var cwd: String?, entrypoint: String?, branch: String?, firstPrompt: String?
-        for line in head.split(separator: "\n") {
-            guard let o = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
-            if cwd == nil, let c = o["cwd"] as? String { cwd = c }
-            if entrypoint == nil, let e = o["entrypoint"] as? String { entrypoint = e }
-            if branch == nil, let b = o["gitBranch"] as? String, !b.isEmpty, b != "HEAD" { branch = b }
-            if firstPrompt == nil, o["type"] as? String == "user", o["isMeta"] as? Bool != true,
-               let text = messageText(o["message"]), !text.hasPrefix("<") {
-                firstPrompt = text
-            }
-            if cwd != nil, entrypoint != nil, firstPrompt != nil { break }
-        }
-        // Desktop-originated transcripts belong to Desktop metadata; orphans stay hidden.
-        guard let cwd, entrypoint != "claude-desktop", firstPrompt != nil else { return nil }
-
-        var title: String?, model: String?
-        let tailSize: UInt64 = 384 * 1024
-        let tailStart = size > tailSize ? size - tailSize : 0
-        try? handle.seek(toOffset: tailStart)
-        let tail = String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
-        for line in tail.split(separator: "\n").reversed() {
-            if title == nil, line.contains("\"type\":\"custom-title\"") || line.contains("\"type\":\"ai-title\""),
-               let o = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] {
-                title = (o["customTitle"] as? String) ?? (o["aiTitle"] as? String)
-            }
-            if model == nil, line.contains("\"type\":\"assistant\""), let r = line.range(of: #""model":"(claude-[^"]+)""#, options: .regularExpression) {
-                model = String(line[r].dropFirst(9).dropLast())
-            }
-            if branch == nil, line.contains("\"gitBranch\":\"") ,
-               let r = line.range(of: #""gitBranch":"[^"]+""#, options: .regularExpression) {
-                let b = String(line[r].dropFirst(13).dropLast())
-                if b != "HEAD" { branch = b }
-            }
-            if title != nil, model != nil { break }
-        }
-
-        let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-        let origin = cwd.range(of: "/.claude/worktrees/").map { String(cwd[..<$0.lowerBound]) } ?? cwd
-        let wt = cwd.range(of: "/.claude/worktrees/").map { String(cwd[$0.upperBound...]).components(separatedBy: "/").first ?? "" }
-        let fallback = firstPrompt!.replacingOccurrences(of: "\n", with: " ")
-        return Session(
-            sessionId: String(url.deletingPathExtension().lastPathComponent),
-            source: .cli,
-            columnId: "cli",
-            cliSessionId: String(url.deletingPathExtension().lastPathComponent),
-            title: title ?? String(fallback.prefix(90)),
-            cwd: cwd,
-            originCwd: origin,
-            branch: branch,
-            worktreeName: wt,
-            lastActivity: mtime,
-            isArchived: false,
-            isStarred: false,
-            model: model,
-            statusLine: nil,
-            prCount: 0
-        )
-    }
-
-    // MARK: Helpers
 
     static func messageText(_ message: Any?) -> String? {
         guard let m = message as? [String: Any] else { return nil }
@@ -194,4 +324,18 @@ enum Scanner {
     }
 
     static func isUUID(_ s: String) -> Bool { UUID(uuidString: s) != nil }
+
+    private static func children(of dir: URL) -> [String] {
+        (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+    }
+
+    /// Files in `dir` matching `name`, with modification date and size fetched in the same directory read.
+    private static func files(in dir: URL, where name: (String) -> Bool) -> [(URL, Stamp)] {
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
+        let urls = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys)) ?? []
+        return urls.compactMap { url in
+            guard name(url.lastPathComponent), let v = try? url.resourceValues(forKeys: Set(keys)) else { return nil }
+            return (url, Stamp(modified: v.contentModificationDate ?? .distantPast, size: v.fileSize ?? 0))
+        }
+    }
 }
