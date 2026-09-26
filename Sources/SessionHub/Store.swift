@@ -23,6 +23,12 @@ final class Store {
     var message: String?
     var lastJournal: URL?
     var hiddenNonLocal = 0
+    /// Sidebar selection: all sessions, or only one status across every column.
+    var sidebarFilter: SidebarFilter? = .all
+    var statusFilter: SessionStatus? {
+        if case let .status(s) = sidebarFilter { return s }
+        return nil
+    }
     /// Selected card ids (`Session.id`).
     var selection: Set<String> = []
     /// Latest observed data shape and how it differs from the baseline.

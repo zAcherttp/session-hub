@@ -178,3 +178,8 @@ enum SessionStatus: Int, CaseIterable, Comparable {
         return (.idle, "Finished its turn; nothing pending")
     }
 }
+
+enum SidebarFilter: Hashable {
+    case all
+    case status(SessionStatus)
+}

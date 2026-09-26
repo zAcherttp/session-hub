@@ -82,25 +82,29 @@ struct BoardView: View {
     @Namespace private var dock
 
     var body: some View {
-        // The board keeps an even margin from every window edge; no top margin because the toolbar
-        // already leaves the same gap below its controls as above them.
-        HStack(alignment: .top, spacing: 0) {
-            // The Stash is pinned like a sidebar; account columns scroll beside it.
-            if store.columns.contains(where: { $0.kind == .stash }) {
-                columnView(store.column("stash"))
-                    .padding(.leading, Metrics.windowPadding)
-                    .padding(.bottom, Metrics.windowPadding)
-            }
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: Metrics.windowPadding) {
-                    ForEach(store.orderedColumns.filter { $0.kind != .stash && !store.prefs.hiddenColumns.contains($0.id) }) { column in
-                        columnView(column)
-                    }
-                }
-                .padding([.horizontal, .bottom], Metrics.windowPadding)
-            }
-            .scrollIndicators(.never)
+        // A standard sidebar (Liquid Glass on macOS 26) holds status filters and the Stash.
+        NavigationSplitView {
+            SidebarView(archiveFilter: archiveFilter) { group, mode in copyCommands(group, mode) }
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 360)
+        } detail: {
+            board
         }
+    }
+
+    /// The board keeps an even margin from the window edges; no top margin because the toolbar
+    /// already leaves the same gap below its controls as above them.
+    private var board: some View {
+        ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: Metrics.windowPadding) {
+                ForEach(store.orderedColumns.filter { $0.kind != .stash && !store.prefs.hiddenColumns.contains($0.id) }) { column in
+                    columnView(column)
+                }
+            }
+            .padding([.horizontal, .bottom], Metrics.windowPadding)
+        }
+        .scrollIndicators(.never)
+        // Only the backdrop extends under the sidebar and toolbar; cards are never mirrored.
+        .background { AmbientBackdrop().extendsUnderSidebar() }
         .floatingToolbar()
         // Floating controls over the content: they never push the board around.
         .overlay(alignment: .bottom) { dockView }
@@ -291,7 +295,9 @@ struct ColumnView: View {
     private var items: [Session] {
         let q = search.lowercased()
         let filtered = (store.columnItems[column.id] ?? []).filter { s in
-            (column.kind == .stash || archiveFilter.includes(s)) && (q.isEmpty || s.searchKey.contains(q))
+            (column.kind == .stash || archiveFilter.includes(s))
+                && (store.statusFilter.map { $0 == s.status } ?? true)
+                && (q.isEmpty || s.searchKey.contains(q))
         }
         guard sortByStatus else { return filtered }   // already newest first
         return filtered.sorted { ($0.status.rawValue, $1.lastActivity) < ($1.status.rawValue, $0.lastActivity) }
@@ -702,16 +708,7 @@ struct StatusChip: View {
     let status: SessionStatus
     let reason: String
 
-    private var color: Color {
-        switch status {
-        case .running: return .green
-        case .needsYou: return .orange
-        case .interrupted: return .red
-        case .inReview: return .blue
-        case .idle: return .gray
-        case .done: return .mint
-        }
-    }
+    private var color: Color { status.color }
 
     var body: some View {
         Label(status.label, systemImage: status.symbol)
@@ -782,5 +779,148 @@ struct ShapePopover: View {
         }
         .padding(16)
         .frame(width: 440)
+    }
+}
+
+/// A standard macOS sidebar, like Music's: status filters (with counts) and the Stash.
+/// Dropping cards anywhere on it stashes them; dragging a stashed row onto an account restores it.
+struct SidebarView: View {
+    @Environment(Store.self) private var store
+    let archiveFilter: ArchiveFilter
+    let onAction: ([Session], Launcher.Mode) -> Void
+    @State private var dropTargeted = false
+
+    var body: some View {
+        @Bindable var store = store
+        let boardSessions = store.sessions.filter { !$0.isStashed && archiveFilter.includes($0) }
+        let counts = Dictionary(grouping: boardSessions, by: \.status).mapValues(\.count)
+        let stashed = store.columnItems["stash"] ?? []
+
+        List(selection: $store.sidebarFilter) {
+            Section("Board") {
+                Label { Text("All sessions") } icon: {
+                    Image(systemName: "rectangle.split.3x1").foregroundStyle(.tint)
+                }
+                .badge(boardSessions.count)
+                .tag(SidebarFilter.all)
+                ForEach(SessionStatus.allCases, id: \.self) { status in
+                    Label { Text(status.label) } icon: {
+                        Image(systemName: status.symbol).foregroundStyle(status.color)
+                    }
+                    .badge(counts[status] ?? 0)
+                    .tag(SidebarFilter.status(status))
+                }
+            }
+            Section {
+                if stashed.isEmpty {
+                    Text("Drop sessions here to stash them")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                ForEach(stashed) { s in
+                    StashRow(session: s)
+                        .draggable(store.dragPayload(for: s)) { DragPreview(session: s, count: 1) }
+                        .contextMenu { stashMenu(s) }
+                }
+            } header: {
+                HStack {
+                    Text("Stash")
+                    Spacer()
+                    if !stashed.isEmpty { Text("\(stashed.count)").monospacedDigit() }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .overlay {
+            if dropTargeted {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(.tint, lineWidth: 2)
+                    .padding(6)
+                    .allowsHitTesting(false)
+            }
+        }
+        .dropDestination(for: String.self) { payloads, _ in
+            let ids = payloads.filter { !$0.hasPrefix(ColumnView.dragPrefix) }
+                .flatMap { $0.split(separator: "\n").map(String.init) }
+            let stash = store.column("stash")
+            for id in ids where !(store.sessions.first { $0.id == id }?.isStashed ?? true) {
+                _ = store.drop(cardId: id, on: stash, copy: false)
+            }
+            store.clearSelection()
+            return !ids.isEmpty
+        } isTargeted: { dropTargeted = $0 }
+    }
+
+    @ViewBuilder private func stashMenu(_ s: Session) -> some View {
+        Menu("Restore to") {
+            ForEach(store.orderedColumns.filter { if case .desktop = $0.kind { return true } else { return false } }) { c in
+                Button(store.name(for: c)) { _ = store.drop(cardId: s.id, on: c, copy: false) }
+            }
+        }
+        if store.pending[s.id] != nil { Button("Cancel pending change") { store.pending[s.id] = nil } }
+        Divider()
+        Button("Copy fork command") { onAction([s], .fork) }
+        Button("Copy resume command") { onAction([s], .resume) }
+        Divider()
+        Button("Reveal transcript in Finder") { NSWorkspace.shared.activateFileViewerSelecting([s.transcriptURL]) }
+    }
+}
+
+struct StashRow: View {
+    @Environment(Store.self) private var store
+    let session: Session
+
+    var body: some View {
+        let move = store.pending[session.id]
+        VStack(alignment: .leading, spacing: 2) {
+            Text(session.title).lineLimit(1)
+            HStack(spacing: 4) {
+                Image(systemName: session.status.symbol).foregroundStyle(session.status.color)
+                Text(session.repoName)
+                if let m = move { Text("→ " + store.name(for: store.column(m.to))).foregroundStyle(.orange) }
+            }
+            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .padding(.vertical, 2)
+        .help(session.statusReason)
+    }
+}
+
+extension SessionStatus {
+    var color: Color {
+        switch self {
+        case .running: return .green
+        case .needsYou: return .orange
+        case .interrupted: return .red
+        case .inReview: return .blue
+        case .idle: return .gray
+        case .done: return .mint
+        }
+    }
+}
+
+/// A soft, low-contrast wash of the board's status colors behind the columns. The sidebar and
+/// toolbar glass refract it, the way Music's sidebar picks up album artwork.
+struct AmbientBackdrop: View {
+    @Environment(Store.self) private var store
+
+    /// The most prominent attention states on the board, most urgent first.
+    private var tints: [Color] {
+        let active = store.sessions.filter { !$0.isArchived && !$0.isStashed }
+        let counts = Dictionary(grouping: active, by: \.status).mapValues(\.count)
+        let order: [SessionStatus] = [.needsYou, .interrupted, .running, .inReview]
+        let present = order.filter { (counts[$0] ?? 0) > 0 }.map(\.color)
+        return present.isEmpty ? [.accentColor] : Array(present.prefix(3))
+    }
+
+    var body: some View {
+        let anchors: [UnitPoint] = [.topLeading, .bottomTrailing, .bottomLeading]
+        ZStack {
+            Color(nsColor: .windowBackgroundColor)
+            ForEach(Array(tints.enumerated()), id: \.offset) { i, color in
+                RadialGradient(colors: [color.opacity(0.22), .clear], center: anchors[i], startRadius: 0, endRadius: 700)
+            }
+        }
+        .drawingGroup()
+        .ignoresSafeArea()
     }
 }
