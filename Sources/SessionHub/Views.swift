@@ -459,34 +459,11 @@ struct SessionCard: View {
             if let st = s.statusLine {
                 Text(st).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
-            // Status and time get their own row so chips never truncate.
+            // One line: badges in priority order, overflow collapsed into "+N", time on the right.
             HStack(spacing: 6) {
-                StatusChip(status: s.status, reason: s.statusReason)
+                BadgeRow(badges: badges(for: s, move: move))
                 Spacer(minLength: 4)
-                RelativeTime(date: s.lastActivity)
-            }
-            let shared = store.sharedWith(s)
-            if s.isWorktree || s.isArchived || s.prCount > 0 || move != nil || !shared.isEmpty {
-                HStack(spacing: 6) {
-                    if s.isWorktree {
-                        GlassBadge(s.cwdExists ? "worktree" : "worktree gone",
-                                   systemImage: s.cwdExists ? "square.split.bottomrightquarter" : "exclamationmark.triangle",
-                                   color: s.cwdExists ? .purple : .red)
-                    }
-                    if s.isArchived { GlassBadge("archived", systemImage: "archivebox", color: .gray) }
-                    if s.prCount > 0 {
-                        GlassBadge("\(s.prCount) PR", systemImage: "arrow.triangle.pull", color: .blue)
-                            .fixedSize()
-                    }
-                    if let m = move {
-                        GlassBadge(store.name(for: store.column(m.to)), systemImage: m.copy ? "plus" : "arrow.right", color: .orange)
-                    }
-                    if !shared.isEmpty {
-                        GlassBadge("shared ×\(shared.count + 1)", systemImage: "person.2", color: .teal)
-                            .fixedSize()
-                            .help("Also in: " + shared.map { store.name(for: store.column($0)) }.joined(separator: ", "))
-                    }
-            }
+                RelativeTime(date: s.lastActivity).fixedSize()
             }
         }
         .padding(10)
@@ -509,6 +486,29 @@ struct SessionCard: View {
         // The menu's items are only built for the card under the pointer (right-click always is).
         .contextMenu { if hovering { menu(s) } }
         .help(s.cwd)
+    }
+
+    /// Badges for a card, most important first; later ones are the first to collapse into "+N".
+    private func badges(for s: Session, move: PendingMove?) -> [BadgeItem] {
+        var out = [BadgeItem(s.status.label, systemImage: s.status.symbol, color: s.status.color, help: s.statusReason)]
+        if let m = move {
+            let target = store.name(for: store.column(m.to))
+            out.append(BadgeItem(target, systemImage: m.copy ? "plus" : "arrow.right", color: .orange,
+                                 help: (m.copy ? "Will be shared with " : "Will move to ") + target))
+        }
+        if s.prCount > 0 { out.append(BadgeItem("\(s.prCount) PR", systemImage: "arrow.triangle.pull", color: .blue)) }
+        if s.isWorktree {
+            out.append(s.cwdExists
+                ? BadgeItem("worktree", systemImage: "square.split.bottomrightquarter", color: .purple)
+                : BadgeItem("worktree gone", systemImage: "exclamationmark.triangle", color: .red))
+        }
+        let shared = store.sharedWith(s)
+        if !shared.isEmpty {
+            out.append(BadgeItem("shared ×\(shared.count + 1)", systemImage: "person.2", color: .teal,
+                                 help: "Also in: " + shared.map { store.name(for: store.column($0)) }.joined(separator: ", ")))
+        }
+        if s.isArchived { out.append(BadgeItem("archived", systemImage: "archivebox", color: .gray)) }
+        return out
     }
 
     @ViewBuilder private func menu(_ s: Session) -> some View {
@@ -924,3 +924,71 @@ extension SessionStatus {
 }
 
 
+
+struct BadgeItem: Identifiable {
+    var id: String { text }
+    let text: String
+    let systemImage: String?
+    let color: Color
+    let help: String?
+
+    init(_ text: String, systemImage: String? = nil, color: Color, help: String? = nil) {
+        self.text = text
+        self.systemImage = systemImage
+        self.color = color
+        self.help = help
+    }
+}
+
+/// A single line of badges. `ViewThatFits` tries the full row, then progressively fewer badges
+/// plus a "+N" badge, and shows the first that fits. The first badge (status) is always kept.
+struct BadgeRow: View {
+    let badges: [BadgeItem]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            ForEach(Array(stride(from: badges.count, through: 1, by: -1)), id: \.self) { shown in
+                row(shown: shown)
+            }
+        }
+    }
+
+    private func row(shown: Int) -> some View {
+        let hidden = badges.dropFirst(shown)
+        return HStack(spacing: 6) {
+            ForEach(badges.prefix(shown)) { b in
+                GlassBadge(b.text, systemImage: b.systemImage, color: b.color)
+                    .fixedSize()
+                    .help(b.help ?? b.text)
+            }
+            if !hidden.isEmpty { OverflowBadge(hidden: Array(hidden)) }
+        }
+    }
+}
+
+/// "+N": hover for a quick list, click for a popover showing the hidden badges.
+struct OverflowBadge: View {
+    let hidden: [BadgeItem]
+    @State private var showing = false
+
+    var body: some View {
+        Button { showing.toggle() } label: {
+            GlassBadge("+\(hidden.count)", color: .gray).fixedSize()
+        }
+        .buttonStyle(.plain)
+        .help(hidden.map(\.text).joined(separator: ", "))
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(hidden) { b in
+                    HStack(spacing: 8) {
+                        GlassBadge(b.text, systemImage: b.systemImage, color: b.color).fixedSize()
+                        if let help = b.help, help != b.text {
+                            Text(help).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(12)
+        }
+    }
+}
